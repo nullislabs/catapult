@@ -1,5 +1,6 @@
 use anyhow::Result;
 use sqlx::PgPool;
+use uuid::Uuid;
 
 use super::models::{DeploymentConfig, DeploymentHistory, Worker};
 use crate::shared::JobStatus;
@@ -12,7 +13,7 @@ pub async fn get_deployment_config(
 ) -> Result<Option<DeploymentConfig>> {
     let config = sqlx::query_as::<_, DeploymentConfig>(
         r#"
-        SELECT id, github_org, github_repo, environment, domain, subdomain,
+        SELECT id, github_org, github_repo, installation_id, environment, domain, subdomain,
                site_type, enabled, created_at, updated_at
         FROM deployment_config
         WHERE github_org = $1 AND github_repo = $2 AND enabled = true
@@ -24,6 +25,27 @@ pub async fn get_deployment_config(
     .await?;
 
     Ok(config)
+}
+
+/// Update installation_id for a deployment config (cached from webhook)
+pub async fn update_installation_id(
+    pool: &PgPool,
+    config_id: i32,
+    installation_id: u64,
+) -> Result<()> {
+    sqlx::query(
+        r#"
+        UPDATE deployment_config
+        SET installation_id = $1
+        WHERE id = $2
+        "#,
+    )
+    .bind(installation_id as i64)
+    .bind(config_id)
+    .execute(pool)
+    .await?;
+
+    Ok(())
 }
 
 /// Get worker endpoint for an environment
@@ -46,6 +68,7 @@ pub async fn get_worker(pool: &PgPool, environment: &str) -> Result<Option<Worke
 pub async fn create_deployment(
     pool: &PgPool,
     config_id: i32,
+    job_id: Uuid,
     deployment_type: &str,
     pr_number: Option<i32>,
     branch: &str,
@@ -53,12 +76,13 @@ pub async fn create_deployment(
 ) -> Result<i32> {
     let row = sqlx::query_scalar::<_, i32>(
         r#"
-        INSERT INTO deployment_history (config_id, deployment_type, pr_number, branch, commit_sha, status)
-        VALUES ($1, $2, $3, $4, $5, 'pending')
+        INSERT INTO deployment_history (config_id, job_id, deployment_type, pr_number, branch, commit_sha, status)
+        VALUES ($1, $2, $3, $4, $5, $6, 'pending')
         RETURNING id
         "#,
     )
     .bind(config_id)
+    .bind(job_id)
     .bind(deployment_type)
     .bind(pr_number)
     .bind(branch)
@@ -67,6 +91,46 @@ pub async fn create_deployment(
     .await?;
 
     Ok(row)
+}
+
+/// Get deployment by job_id (for status updates from workers)
+pub async fn get_deployment_by_job_id(
+    pool: &PgPool,
+    job_id: Uuid,
+) -> Result<Option<DeploymentHistory>> {
+    let deployment = sqlx::query_as::<_, DeploymentHistory>(
+        r#"
+        SELECT id, config_id, job_id, deployment_type, pr_number, branch, commit_sha,
+               status, started_at, completed_at, deployed_url, error_message, github_comment_id
+        FROM deployment_history
+        WHERE job_id = $1
+        "#,
+    )
+    .bind(job_id)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(deployment)
+}
+
+/// Get deployment config by ID
+pub async fn get_deployment_config_by_id(
+    pool: &PgPool,
+    config_id: i32,
+) -> Result<Option<DeploymentConfig>> {
+    let config = sqlx::query_as::<_, DeploymentConfig>(
+        r#"
+        SELECT id, github_org, github_repo, installation_id, environment, domain, subdomain,
+               site_type, enabled, created_at, updated_at
+        FROM deployment_config
+        WHERE id = $1
+        "#,
+    )
+    .bind(config_id)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(config)
 }
 
 /// Update deployment status
@@ -127,7 +191,7 @@ pub async fn set_github_comment_id(
 pub async fn get_deployment(pool: &PgPool, deployment_id: i32) -> Result<Option<DeploymentHistory>> {
     let deployment = sqlx::query_as::<_, DeploymentHistory>(
         r#"
-        SELECT id, config_id, deployment_type, pr_number, branch, commit_sha,
+        SELECT id, config_id, job_id, deployment_type, pr_number, branch, commit_sha,
                status, started_at, completed_at, deployed_url, error_message, github_comment_id
         FROM deployment_history
         WHERE id = $1
@@ -148,7 +212,7 @@ pub async fn find_active_pr_deployment(
 ) -> Result<Option<DeploymentHistory>> {
     let deployment = sqlx::query_as::<_, DeploymentHistory>(
         r#"
-        SELECT id, config_id, deployment_type, pr_number, branch, commit_sha,
+        SELECT id, config_id, job_id, deployment_type, pr_number, branch, commit_sha,
                status, started_at, completed_at, deployed_url, error_message, github_comment_id
         FROM deployment_history
         WHERE config_id = $1 AND pr_number = $2 AND status = 'success'

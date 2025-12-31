@@ -26,9 +26,12 @@ CREATE TABLE IF NOT EXISTS deployment_config (
   github_org VARCHAR(255) NOT NULL,
   github_repo VARCHAR(255) NOT NULL,
 
+  -- GitHub App installation (cached from webhook for API access)
+  installation_id BIGINT,
+
   -- Deployment target
   environment VARCHAR(50) NOT NULL REFERENCES workers(environment),
-  domain VARCHAR(255) NOT NULL,       -- Base domain (e.g., 'wilmen.co')
+  domain VARCHAR(255) NOT NULL,       -- Base domain (e.g., 'example.com')
   subdomain VARCHAR(255),             -- Subdomain for main branch (nullable, e.g., 'www')
 
   -- Build configuration
@@ -60,6 +63,9 @@ CREATE TABLE IF NOT EXISTS deployment_history (
   id SERIAL PRIMARY KEY,
   config_id INTEGER REFERENCES deployment_config(id) ON DELETE CASCADE,
 
+  -- Job tracking (for correlating worker status updates)
+  job_id UUID UNIQUE,
+
   -- Deployment details
   deployment_type VARCHAR(10) NOT NULL,  -- 'pr' or 'main'
   pr_number INTEGER,                     -- NULL for main branch deployments
@@ -79,6 +85,10 @@ CREATE TABLE IF NOT EXISTS deployment_history (
   -- GitHub integration
   github_comment_id BIGINT              -- ID of GitHub comment for updates
 );
+
+-- Index for looking up deployments by job_id (for worker status updates)
+CREATE INDEX IF NOT EXISTS idx_deployment_history_job_id
+  ON deployment_history(job_id) WHERE job_id IS NOT NULL;
 
 -- Index for finding PR deployments
 CREATE INDEX IF NOT EXISTS idx_deployment_history_pr

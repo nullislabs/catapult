@@ -92,18 +92,27 @@ async fn process_webhook_event(state: &AppState, event: WebhookEvent) -> anyhow:
                 .map(|i| i.id)
                 .ok_or_else(|| anyhow::anyhow!("Missing installation ID in webhook"))?;
 
+            // Cache installation_id on config for later use (status updates)
+            if config.installation_id.is_none() || config.installation_id != Some(installation_id as i64) {
+                db::update_installation_id(&state.db, config.id, installation_id).await?;
+            }
+
             match pr_event.action {
                 PullRequestAction::Opened | PullRequestAction::Synchronize | PullRequestAction::Reopened => {
+                    // Generate job_id upfront
+                    let job_id = Uuid::new_v4();
+
                     // Get installation token
                     let token = state
                         .github_app
                         .get_installation_token(&state.http_client, installation_id)
                         .await?;
 
-                    // Create deployment record
+                    // Create deployment record with job_id
                     let deployment_id = db::create_deployment(
                         &state.db,
                         config.id,
+                        job_id,
                         "pr",
                         Some(pr_event.number as i32),
                         &pr_event.pull_request.head.branch,
@@ -132,9 +141,9 @@ async fn process_webhook_event(state: &AppState, event: WebhookEvent) -> anyhow:
                             anyhow::anyhow!("No worker found for environment: {}", config.environment)
                         })?;
 
-                    // Dispatch build job
+                    // Dispatch build job with same job_id
                     let job = BuildJob {
-                        job_id: Uuid::new_v4(),
+                        job_id,
                         repo_url: pr_event.repository.clone_url.clone(),
                         git_token: token.token,
                         branch: pr_event.pull_request.head.branch.clone(),
@@ -160,14 +169,15 @@ async fn process_webhook_event(state: &AppState, event: WebhookEvent) -> anyhow:
                     .await?;
 
                     tracing::info!(
-                        job_id = %job.job_id,
+                        job_id = %job_id,
+                        deployment_id = deployment_id,
                         pr = pr_event.number,
                         "Dispatched build job"
                     );
                 }
                 PullRequestAction::Closed => {
                     // Clean up PR deployment
-                    if let Some(deployment) =
+                    if let Some(_deployment) =
                         db::find_active_pr_deployment(&state.db, config.id, pr_event.number as i32).await?
                     {
                         // Get worker
@@ -240,16 +250,25 @@ async fn process_webhook_event(state: &AppState, event: WebhookEvent) -> anyhow:
                 .map(|i| i.id)
                 .ok_or_else(|| anyhow::anyhow!("Missing installation ID in webhook"))?;
 
+            // Cache installation_id on config
+            if config.installation_id.is_none() || config.installation_id != Some(installation_id as i64) {
+                db::update_installation_id(&state.db, config.id, installation_id).await?;
+            }
+
+            // Generate job_id upfront
+            let job_id = Uuid::new_v4();
+
             // Get installation token
             let token = state
                 .github_app
                 .get_installation_token(&state.http_client, installation_id)
                 .await?;
 
-            // Create deployment record
-            let _deployment_id = db::create_deployment(
+            // Create deployment record with job_id
+            let deployment_id = db::create_deployment(
                 &state.db,
                 config.id,
+                job_id,
                 "main",
                 None,
                 push_event.branch_name().unwrap_or("main"),
@@ -264,9 +283,9 @@ async fn process_webhook_event(state: &AppState, event: WebhookEvent) -> anyhow:
                     anyhow::anyhow!("No worker found for environment: {}", config.environment)
                 })?;
 
-            // Dispatch build job
+            // Dispatch build job with same job_id
             let job = BuildJob {
-                job_id: Uuid::new_v4(),
+                job_id,
                 repo_url: push_event.repository.clone_url.clone(),
                 git_token: token.token,
                 branch: push_event.branch_name().unwrap_or("main").to_string(),
@@ -289,7 +308,8 @@ async fn process_webhook_event(state: &AppState, event: WebhookEvent) -> anyhow:
             .await?;
 
             tracing::info!(
-                job_id = %job.job_id,
+                job_id = %job_id,
+                deployment_id = deployment_id,
                 commit = &push_event.after,
                 "Dispatched main branch build job"
             );

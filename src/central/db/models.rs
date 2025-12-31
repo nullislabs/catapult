@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use sqlx::FromRow;
+use uuid::Uuid;
 
 use crate::shared::SiteType;
 
@@ -21,6 +22,7 @@ pub struct DeploymentConfig {
     pub id: i32,
     pub github_org: String,
     pub github_repo: String,
+    pub installation_id: Option<i64>,
     pub environment: String,
     pub domain: String,
     pub subdomain: Option<String>,
@@ -42,6 +44,7 @@ impl DeploymentConfig {
 pub struct DeploymentHistory {
     pub id: i32,
     pub config_id: i32,
+    pub job_id: Option<Uuid>,
     pub deployment_type: String,
     pub pr_number: Option<i32>,
     pub branch: String,
