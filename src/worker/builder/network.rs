@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use bollard::models::IpamConfig;
-use bollard::network::{CreateNetworkOptions, InspectNetworkOptions};
+use bollard::network::{CreateNetworkOptions, InspectNetworkOptions, ListNetworksOptions};
 use bollard::Docker;
-use std::collections::HashMap;
+use std::collections::HashSet;
 use tokio::process::Command;
 
 /// Name of the isolated build network
@@ -49,10 +49,16 @@ pub async fn ensure_build_network(docker: &Docker) -> Result<()> {
         }
     }
 
-    // Create the network with a specific subnet for iptables rules
+    // Find an available subnet that doesn't conflict with existing networks
+    let subnet = find_available_subnet(docker).await?;
+    let gateway = subnet.replace(".0/24", ".1");
+
+    tracing::debug!(subnet = %subnet, "Selected subnet for build network");
+
+    // Create the network with the selected subnet
     let ipam_config = IpamConfig {
-        subnet: Some("10.89.0.0/24".to_string()),
-        gateway: Some("10.89.0.1".to_string()),
+        subnet: Some(subnet.clone()),
+        gateway: Some(gateway),
         ..Default::default()
     };
 
@@ -65,12 +71,7 @@ pub async fn ensure_build_network(docker: &Docker) -> Result<()> {
             config: Some(vec![ipam_config]),
             options: None,
         },
-        options: {
-            let mut opts = HashMap::new();
-            // Disable inter-container communication
-            opts.insert("com.docker.network.bridge.enable_icc", "false");
-            opts
-        },
+        options: Default::default(),
         ..Default::default()
     };
 
@@ -80,14 +81,91 @@ pub async fn ensure_build_network(docker: &Docker) -> Result<()> {
         .context("Failed to create build network")?;
 
     // Set up iptables rules to block RFC1918
-    ensure_iptables_rules("10.89.0.0/24").await?;
+    ensure_iptables_rules(&subnet).await?;
 
     tracing::info!(
         network = BUILD_NETWORK_NAME,
+        subnet = %subnet,
         "Created isolated build network with RFC1918 blocking"
     );
 
     Ok(())
+}
+
+/// Find an available subnet in the 10.89.x.0/24 range
+async fn find_available_subnet(docker: &Docker) -> Result<String> {
+    // List all networks to find used subnets
+    let networks = docker
+        .list_networks(Some(ListNetworksOptions::<String>::default()))
+        .await
+        .context("Failed to list networks")?;
+
+    // Collect all subnets in use
+    let mut used_subnets: HashSet<String> = HashSet::new();
+    for network in networks {
+        if let Some(ipam) = network.ipam {
+            if let Some(configs) = ipam.config {
+                for config in configs {
+                    if let Some(subnet) = config.subnet {
+                        used_subnets.insert(subnet);
+                    }
+                }
+            }
+        }
+    }
+
+    // Try subnets in the 10.89.x.0/24 range (x from 0 to 255)
+    for x in 0..=255u8 {
+        let subnet = format!("10.89.{}.0/24", x);
+        if !used_subnets.contains(&subnet) {
+            // Also check for overlapping ranges (though /24s in different octets won't overlap)
+            let overlaps = used_subnets.iter().any(|used| subnets_overlap(&subnet, used));
+            if !overlaps {
+                return Ok(subnet);
+            }
+        }
+    }
+
+    anyhow::bail!("No available subnet found in 10.89.x.0/24 range")
+}
+
+/// Check if two CIDR subnets overlap (simplified for /24 networks)
+fn subnets_overlap(a: &str, b: &str) -> bool {
+    // Parse subnet and mask
+    fn parse_subnet(s: &str) -> Option<(u32, u32)> {
+        let parts: Vec<&str> = s.split('/').collect();
+        if parts.len() != 2 {
+            return None;
+        }
+        let mask_bits: u32 = parts[1].parse().ok()?;
+        let octets: Vec<&str> = parts[0].split('.').collect();
+        if octets.len() != 4 {
+            return None;
+        }
+        let ip: u32 = (octets[0].parse::<u32>().ok()? << 24)
+            | (octets[1].parse::<u32>().ok()? << 16)
+            | (octets[2].parse::<u32>().ok()? << 8)
+            | octets[3].parse::<u32>().ok()?;
+        let mask = if mask_bits == 0 {
+            0
+        } else {
+            !0u32 << (32 - mask_bits)
+        };
+        Some((ip & mask, mask))
+    }
+
+    let Some((net_a, mask_a)) = parse_subnet(a) else {
+        return false;
+    };
+    let Some((net_b, mask_b)) = parse_subnet(b) else {
+        return false;
+    };
+
+    // Use the larger network's mask (smaller mask value = fewer bits = larger network)
+    // Two networks overlap if they share any addresses, which happens when the smaller
+    // mask (larger network) applied to both results in the same value
+    let common_mask = mask_a.min(mask_b);
+    (net_a & common_mask) == (net_b & common_mask)
 }
 
 /// Ensure iptables rules block RFC1918 destinations from the build network
@@ -126,10 +204,10 @@ async fn ensure_iptables_rules(source_subnet: &str) -> Result<()> {
 
         // Add rules to block RFC1918 destinations
         for range in RFC1918_RANGES {
-            // Skip the build network's own subnet
+            // Skip the build network's own subnet (allow self-communication)
             if range == &"10.0.0.0/8" {
                 // More specific rule to allow the build network itself but block rest of 10.x
-                add_iptables_rule(chain_name, source_subnet, "10.89.0.0/24", "ACCEPT").await?;
+                add_iptables_rule(chain_name, source_subnet, source_subnet, "ACCEPT").await?;
             }
 
             add_iptables_rule(chain_name, source_subnet, range, "DROP").await?;
@@ -232,5 +310,29 @@ mod tests {
     #[test]
     fn test_build_network_name() {
         assert_eq!(BUILD_NETWORK_NAME, "catapult-build-isolated");
+    }
+
+    #[test]
+    fn test_subnets_overlap_same() {
+        assert!(subnets_overlap("10.89.0.0/24", "10.89.0.0/24"));
+    }
+
+    #[test]
+    fn test_subnets_overlap_different() {
+        assert!(!subnets_overlap("10.89.0.0/24", "10.89.1.0/24"));
+        assert!(!subnets_overlap("10.89.0.0/24", "192.168.1.0/24"));
+    }
+
+    #[test]
+    fn test_subnets_overlap_larger_contains_smaller() {
+        // 10.0.0.0/8 contains 10.89.0.0/24
+        assert!(subnets_overlap("10.0.0.0/8", "10.89.0.0/24"));
+        assert!(subnets_overlap("10.89.0.0/24", "10.0.0.0/8"));
+    }
+
+    #[test]
+    fn test_subnets_overlap_172_range() {
+        assert!(subnets_overlap("172.16.0.0/12", "172.17.0.0/24"));
+        assert!(!subnets_overlap("172.16.0.0/12", "172.32.0.0/24"));
     }
 }
