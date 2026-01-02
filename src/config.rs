@@ -85,6 +85,21 @@ pub struct WorkerConfig {
 
     /// Address to listen on
     pub listen_addr: SocketAddr,
+
+    /// Whether to use container isolation for builds
+    pub use_containers: bool,
+
+    /// Container image for builds (must have nix installed)
+    pub build_image: String,
+
+    /// Memory limit for build containers (in bytes)
+    pub container_memory_limit: u64,
+
+    /// CPU limit for build containers (number of CPUs * 100000)
+    pub container_cpu_quota: i64,
+
+    /// PID limit for build containers
+    pub container_pids_limit: i64,
 }
 
 impl WorkerConfig {
@@ -112,6 +127,28 @@ impl WorkerConfig {
                 .unwrap_or_else(|_| "0.0.0.0:8080".to_string())
                 .parse()
                 .context("LISTEN_ADDR must be a valid socket address")?,
+
+            use_containers: std::env::var("USE_CONTAINERS")
+                .map(|v| v == "true" || v == "1")
+                .unwrap_or(true), // Default to using containers
+
+            build_image: std::env::var("BUILD_IMAGE")
+                .unwrap_or_else(|_| "nixos/nix:latest".to_string()),
+
+            container_memory_limit: std::env::var("CONTAINER_MEMORY_LIMIT")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(4 * 1024 * 1024 * 1024), // 4GB default
+
+            container_cpu_quota: std::env::var("CONTAINER_CPU_QUOTA")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(200000), // 2 CPUs default
+
+            container_pids_limit: std::env::var("CONTAINER_PIDS_LIMIT")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(1000),
         })
     }
 }
