@@ -239,10 +239,31 @@ Add to your NixOS configuration (e.g., `~/.config/nixos/catapult-worker.nix`):
   };
 
   # Caddy for serving sites
+  #
+  # Catapult dynamically adds routes via the admin API.
+  # Domain-level static config (Matrix well-known, etc.) goes in virtualHosts.
+  # Dynamic deployment routes are merged with this config automatically.
   services.caddy = {
     enable = true;
     globalConfig = ''
       admin localhost:2019
+    '';
+
+    # Example: Domain config with Matrix well-known
+    virtualHosts."nxm.rs".extraConfig = ''
+      # Matrix server delegation (static, always present)
+      handle /.well-known/matrix/* {
+        header Content-Type application/json
+        respond `{"m.server":"matrix.nxm.rs:443"}`
+      }
+
+      # Catapult adds file_server routes via admin API
+      # They merge with this config automatically
+    '';
+
+    # PR preview wildcard domain
+    virtualHosts."*.nxm.rs".extraConfig = ''
+      # Catapult adds routes for pr-{N}-{repo}.nxm.rs
     '';
   };
 
@@ -306,6 +327,64 @@ podman --remote info
 4. Verify "Building..." comment appears on PR
 5. Check Worker logs for build execution
 6. Verify deployment URL in PR comment
+
+## Caddy Configuration Architecture
+
+Catapult uses a **hybrid static + dynamic** approach for Caddy configuration:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  Static Config (NixOS Caddyfile)                                    │
+│  - Domain-level settings (Matrix well-known, headers, redirects)    │
+│  - TLS/ACME configuration                                           │
+│  - Base virtual hosts                                               │
+│  - Managed by NixOS, requires rebuild to change                     │
+└─────────────────────────────────────────────────────────────────────┘
+                              +
+┌─────────────────────────────────────────────────────────────────────┐
+│  Dynamic Routes (Caddy Admin API)                                   │
+│  - Per-deployment file_server routes                                │
+│  - Added/removed by Catapult worker                                 │
+│  - Changes take effect immediately, no reload needed                │
+│  - Merged with static config automatically                          │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### How It Works
+
+1. **Caddy starts** with your NixOS-defined Caddyfile (static config)
+2. **Admin API enabled** on `localhost:2019`
+3. **Catapult deploys** a site → POSTs route to admin API
+4. **Route is merged** with existing config, takes effect immediately
+5. **PR closed** → Catapult DELETEs the route via admin API
+
+### Domain-Level Config Examples
+
+Put static, domain-level configuration in your NixOS Caddy config:
+
+```nix
+services.caddy.virtualHosts."example.com".extraConfig = ''
+  # Matrix server delegation
+  handle /.well-known/matrix/* {
+    header Content-Type application/json
+    respond `{"m.server":"matrix.example.com:443"}`
+  }
+
+  # Security headers
+  header {
+    X-Content-Type-Options nosniff
+    X-Frame-Options DENY
+    Referrer-Policy strict-origin-when-cross-origin
+  }
+
+  # Redirect www to apex
+  @www host www.example.com
+  redir @www https://example.com{uri} permanent
+'';
+```
+
+Catapult's dynamic routes handle the actual site content (`file_server` for
+the deployed static files).
 
 ## Troubleshooting
 
