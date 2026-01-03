@@ -6,6 +6,9 @@ mod dispatch;
 mod github;
 mod handlers;
 mod server;
+mod worker_monitor;
+
+pub use worker_monitor::{MonitorConfig, WorkerMonitor};
 
 /// Run the Central orchestrator
 pub async fn run(config: CentralConfig) -> Result<()> {

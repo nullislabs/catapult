@@ -18,7 +18,15 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Run as Central orchestrator (receives GitHub webhooks, dispatches to workers)
-    Central,
+    Central {
+        /// Worker endpoints in format zone=https://endpoint
+        ///
+        /// Each worker serves a deployment zone (tenant). Can be specified multiple times.
+        ///
+        /// Example: --worker nullislabs=https://deployer.nullislabs.io
+        #[arg(long = "worker", value_name = "ZONE=URL")]
+        workers: Vec<String>,
+    },
     /// Run as Worker (executes builds, deploys to Caddy)
     Worker,
 }
@@ -37,8 +45,8 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Central => {
-            let config = config::CentralConfig::from_env()?;
+        Command::Central { workers } => {
+            let config = config::CentralConfig::from_env_and_args(workers)?;
             central::run(config).await?;
         }
         Command::Worker => {

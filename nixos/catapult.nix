@@ -13,6 +13,10 @@
 #     githubPrivateKeyFile = "/var/lib/catapult/github-private-key.pem";
 #     githubWebhookSecretFile = "/var/lib/catapult/webhook-secret";
 #     workerSharedSecretFile = "/var/lib/catapult/worker-secret";
+#     workers = {
+#       nullislabs = "https://deployer.nullislabs.io";
+#       nullispl = "https://deployer.nullis.pl";
+#     };
 #   };
 #
 #   services.catapult.worker = {
@@ -105,6 +109,20 @@ in
         type = types.bool;
         default = false;
         description = "Open firewall port for the listen address";
+      };
+
+      workers = mkOption {
+        type = types.attrsOf types.str;
+        default = { };
+        description = ''
+          Worker endpoints by zone name.
+          Each zone is a deployment target (tenant) with a dedicated worker.
+          Example: { nullislabs = "https://deployer.nullislabs.io"; }
+        '';
+        example = {
+          nullislabs = "https://deployer.nullislabs.io";
+          nullispl = "https://deployer.nullis.pl";
+        };
       };
     };
 
@@ -262,10 +280,15 @@ in
         };
 
         # Read secrets and set environment variables
-        script = ''
+        script = let
+          # Build --worker arguments from config
+          workerArgs = lib.concatStringsSep " " (
+            lib.mapAttrsToList (zone: endpoint: "--worker ${zone}=${endpoint}") cfg.central.workers
+          );
+        in ''
           export GITHUB_WEBHOOK_SECRET="$(cat $CREDENTIALS_DIRECTORY/webhook-secret)"
           export WORKER_SHARED_SECRET="$(cat $CREDENTIALS_DIRECTORY/worker-secret)"
-          exec ${cfg.central.package}/bin/catapult central
+          exec ${cfg.central.package}/bin/catapult central ${workerArgs}
         '';
       };
 

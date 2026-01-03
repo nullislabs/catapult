@@ -9,8 +9,10 @@ use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 use tower_http::trace::TraceLayer;
 
+use crate::central::db;
 use crate::central::github::GitHubApp;
-use crate::central::handlers::{handle_status, handle_webhook};
+use crate::central::handlers::{handle_heartbeat, handle_status, handle_webhook};
+use crate::central::worker_monitor::{MonitorConfig, WorkerMonitor};
 use crate::config::CentralConfig;
 
 /// Shared application state
@@ -46,6 +48,28 @@ pub async fn run(config: CentralConfig) -> Result<()> {
 
     tracing::info!("Database connected and migrations applied");
 
+    // Sync workers from config to database
+    if !config.workers.is_empty() {
+        let worker_count = db::sync_workers(&db, &config.workers)
+            .await
+            .context("Failed to sync workers to database")?;
+        tracing::info!(count = worker_count, "Workers synced to database");
+
+        for (zone, endpoint) in &config.workers {
+            tracing::info!(zone = %zone, endpoint = %endpoint, "Worker registered");
+        }
+
+        // Start worker health monitor
+        let monitor = WorkerMonitor::new(
+            db.clone(),
+            config.workers.clone(),
+            MonitorConfig::default(),
+        );
+        monitor.start();
+    } else {
+        tracing::warn!("No workers configured - deployments will fail until workers are added");
+    }
+
     // Build application state
     let state = AppState {
         config: Arc::new(config.clone()),
@@ -58,6 +82,7 @@ pub async fn run(config: CentralConfig) -> Result<()> {
     let app = Router::new()
         .route("/webhook/github", post(handle_webhook))
         .route("/api/status", post(handle_status))
+        .route("/api/workers/heartbeat", post(handle_heartbeat))
         .route("/health", get(health_check))
         .layer(TraceLayer::new_for_http())
         .with_state(state);

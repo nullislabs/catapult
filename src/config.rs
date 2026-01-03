@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
@@ -23,11 +24,19 @@ pub struct CentralConfig {
 
     /// Address to listen on
     pub listen_addr: SocketAddr,
+
+    /// Worker endpoints by environment name
+    /// e.g., {"production": "https://deployer.example.com", "staging": "https://deployer-staging.example.com"}
+    pub workers: HashMap<String, String>,
 }
 
 impl CentralConfig {
-    /// Load configuration from environment variables
-    pub fn from_env() -> Result<Self> {
+    /// Load configuration from environment variables and CLI arguments
+    ///
+    /// Workers are specified via CLI: `--worker zone=https://endpoint`
+    pub fn from_env_and_args(worker_args: Vec<String>) -> Result<Self> {
+        let workers = Self::parse_worker_args(worker_args)?;
+
         Ok(Self {
             database_url: std::env::var("DATABASE_URL")
                 .context("DATABASE_URL environment variable required")?,
@@ -51,7 +60,41 @@ impl CentralConfig {
                 .unwrap_or_else(|_| "0.0.0.0:8080".to_string())
                 .parse()
                 .context("LISTEN_ADDR must be a valid socket address")?,
+
+            workers,
         })
+    }
+
+    /// Parse worker arguments from CLI
+    ///
+    /// Each argument should be in the format: `zone=https://endpoint`
+    fn parse_worker_args(args: Vec<String>) -> Result<HashMap<String, String>> {
+        let mut workers = HashMap::new();
+
+        for arg in args {
+            let (zone, endpoint) = arg
+                .split_once('=')
+                .with_context(|| format!("Invalid worker format '{}', expected 'zone=https://endpoint'", arg))?;
+
+            let zone = zone.trim();
+            let endpoint = endpoint.trim();
+
+            if zone.is_empty() {
+                anyhow::bail!("Empty zone name in worker argument '{}'", arg);
+            }
+            if endpoint.is_empty() {
+                anyhow::bail!("Empty endpoint URL in worker argument '{}'", arg);
+            }
+            if !endpoint.starts_with("http://") && !endpoint.starts_with("https://") {
+                anyhow::bail!("Worker endpoint must be a URL: '{}'", endpoint);
+            }
+
+            if workers.insert(zone.to_string(), endpoint.to_string()).is_some() {
+                anyhow::bail!("Duplicate worker zone: '{}'", zone);
+            }
+        }
+
+        Ok(workers)
     }
 
     /// Load the GitHub App private key from disk

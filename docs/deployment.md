@@ -128,6 +128,13 @@ Add to your NixOS configuration (e.g., `~/.config/nixos/catapult-central.nix`):
     workerSharedSecretFile = "/var/lib/catapult/worker-secret";
     listenAddress = "127.0.0.1:8080";
     logLevel = "catapult=info,tower_http=info";
+
+    # Worker endpoints by zone (tenant)
+    # Each zone has a dedicated worker that handles deployments for that zone
+    workers = {
+      nullislabs = "https://deployer.nullislabs.io";
+      nullispl = "https://deployer.nullis.pl";
+    };
   };
 
   # Caddy as reverse proxy
@@ -154,27 +161,34 @@ After enabling PostgreSQL, create the tables:
 sudo systemctl start catapult-central
 ```
 
-### Register Workers
+### Worker Registration
 
-Connect to PostgreSQL and register your workers:
+Workers are automatically registered from your Central configuration on startup.
+The `workers` attribute in your NixOS config defines all available workers:
 
-```sql
-INSERT INTO workers (environment, endpoint, enabled)
-VALUES
-  ('production', 'https://deployer.example.com', true),
-  ('staging', 'https://deployer-staging.example.com', true);
+```nix
+workers = {
+  nullislabs = "https://deployer.nullislabs.io";
+  nullispl = "https://deployer.nullis.pl";
+};
 ```
+
+Each key is a **zone** (tenant identifier) that matches the `environment` field
+in your deployment configs. Workers are synced to the database on Central startup,
+and workers not in the config are automatically disabled.
 
 ### Configure Deployments
 
-Register repositories for deployment:
+Register repositories for deployment. The `environment` field must match a zone
+defined in your `workers` configuration:
 
 ```sql
 INSERT INTO deployment_config
   (github_org, github_repo, environment, domain, subdomain, site_type, enabled)
 VALUES
-  ('myorg', 'website', 'production', 'example.com', 'www', 'sveltekit', true),
-  ('myorg', 'docs', 'production', 'docs.example.com', NULL, 'vite', true);
+  ('nullislabs', 'website', 'nullislabs', 'nullislabs.io', 'www', 'sveltekit', true),
+  ('nullislabs', 'docs', 'nullislabs', 'docs.nullislabs.io', NULL, 'vite', true),
+  ('nullispl', 'portfolio', 'nullispl', 'nullis.pl', NULL, 'zola', true);
 ```
 
 ## Step 4: Worker Server Configuration

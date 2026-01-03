@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use anyhow::Result;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -62,6 +64,70 @@ pub async fn get_worker(pool: &PgPool, environment: &str) -> Result<Option<Worke
     .await?;
 
     Ok(worker)
+}
+
+/// Update worker last_seen timestamp (for heartbeat/health checks)
+pub async fn update_worker_heartbeat(pool: &PgPool, environment: &str) -> Result<bool> {
+    let result = sqlx::query(
+        r#"
+        UPDATE workers
+        SET last_seen = NOW()
+        WHERE environment = $1 AND enabled = true
+        "#,
+    )
+    .bind(environment)
+    .execute(pool)
+    .await?;
+
+    Ok(result.rows_affected() > 0)
+}
+
+/// Sync workers from configuration to database
+///
+/// - Upserts workers that are in the config (creates new or updates existing)
+/// - Disables workers that are no longer in the config
+/// - Returns the number of workers synced
+pub async fn sync_workers(pool: &PgPool, workers: &HashMap<String, String>) -> Result<usize> {
+    // Start a transaction
+    let mut tx = pool.begin().await?;
+
+    // Upsert each worker from config
+    for (environment, endpoint) in workers {
+        sqlx::query(
+            r#"
+            INSERT INTO workers (environment, endpoint, enabled, last_seen)
+            VALUES ($1, $2, true, NOW())
+            ON CONFLICT (environment) DO UPDATE SET
+                endpoint = EXCLUDED.endpoint,
+                enabled = true,
+                last_seen = NOW(),
+                updated_at = NOW()
+            "#,
+        )
+        .bind(environment)
+        .bind(endpoint)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    // Disable workers that are not in the config
+    if !workers.is_empty() {
+        let environments: Vec<&str> = workers.keys().map(|s| s.as_str()).collect();
+        sqlx::query(
+            r#"
+            UPDATE workers
+            SET enabled = false, updated_at = NOW()
+            WHERE environment != ALL($1) AND enabled = true
+            "#,
+        )
+        .bind(&environments)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    tx.commit().await?;
+
+    Ok(workers.len())
 }
 
 /// Create a new deployment history record
