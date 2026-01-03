@@ -31,11 +31,12 @@
               openssl
               pkg-config
 
-              # Rust toolchain (stable)
+              # Rust toolchain (stable with coverage support)
               (rust-bin.stable.latest.default.override {
                 extensions = [
                   "rust-src"
                   "rust-analyzer"
+                  "llvm-tools-preview"  # Required for cargo-llvm-cov
                 ];
               })
 
@@ -43,6 +44,7 @@
               just
               cargo-audit
               cargo-watch
+              cargo-llvm-cov
             ];
 
             # Set OpenSSL environment variables

@@ -1,6 +1,10 @@
 # Build artifacts
 /target/
 
+# Coverage
+lcov.info
+*.profraw
+
 # IDE
 .idea/
 .vscode/
