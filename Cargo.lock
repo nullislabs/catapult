@@ -318,6 +318,7 @@ dependencies = [
  "hmac",
  "http-body-util",
  "jsonwebtoken",
+ "libc",
  "reqwest",
  "serde",
  "serde_json",

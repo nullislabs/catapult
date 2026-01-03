@@ -113,7 +113,7 @@ impl WorkerConfig {
                 .context("WORKER_SHARED_SECRET environment variable required")?,
 
             podman_socket: std::env::var("PODMAN_SOCKET")
-                .unwrap_or_else(|_| "/run/podman/podman.sock".to_string())
+                .unwrap_or_else(|_| Self::detect_podman_socket())
                 .into(),
 
             caddy_admin_api: std::env::var("CADDY_ADMIN_API")
@@ -150,5 +150,29 @@ impl WorkerConfig {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(1000),
         })
+    }
+
+    /// Detect the best available Podman socket
+    ///
+    /// Prefers the system socket (for production with iptables support),
+    /// falls back to user socket if system socket isn't available.
+    fn detect_podman_socket() -> String {
+        // First try system socket (preferred for production - supports iptables)
+        let system_socket = "/run/podman/podman.sock";
+        if std::path::Path::new(system_socket).exists() {
+            return system_socket.to_string();
+        }
+
+        // Fall back to user socket (for development/rootless mode)
+        // SAFETY: getuid is safe to call and returns the real user ID
+        let uid = unsafe { libc::getuid() };
+        let user_socket = format!("/run/user/{}/podman/podman.sock", uid);
+        if std::path::Path::new(&user_socket).exists() {
+            return user_socket;
+        }
+
+        // Default to system socket even if it doesn't exist
+        // (will fail with a clear error when used)
+        system_socket.to_string()
     }
 }
