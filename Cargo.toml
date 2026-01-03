@@ -55,7 +55,9 @@ bytes = "1"
 derive_more = { version = "1", features = ["display", "from", "error", "deref", "as_ref"] }
 
 [dev-dependencies]
-testcontainers = "0.21"
-testcontainers-modules = { version = "0.10", features = ["postgres"] }
+testcontainers = "0.23"
+testcontainers-modules = { version = "0.11", features = ["postgres"] }
 tempfile = "3"
 wiremock = "0.6"
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"

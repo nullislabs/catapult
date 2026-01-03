@@ -1,7 +1,7 @@
 use crate::config::CentralConfig;
 use anyhow::Result;
 
-mod db;
+pub mod db;
 mod dispatch;
 mod github;
 mod handlers;

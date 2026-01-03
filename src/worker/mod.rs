@@ -1,7 +1,7 @@
 use crate::config::WorkerConfig;
 use anyhow::Result;
 
-mod builder;
+pub mod builder;
 mod callback;
 mod deploy;
 mod handlers;

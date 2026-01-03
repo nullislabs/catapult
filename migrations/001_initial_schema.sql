@@ -8,9 +8,9 @@ CREATE TABLE IF NOT EXISTS workers (
   environment VARCHAR(50) NOT NULL UNIQUE,  -- 'nullislabs', 'nullispl', etc.
   endpoint VARCHAR(255) NOT NULL,           -- 'https://deployer.nullislabs.io'
   enabled BOOLEAN DEFAULT TRUE,
-  last_seen TIMESTAMP,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  last_seen TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Index for looking up workers by environment
@@ -39,8 +39,8 @@ CREATE TABLE IF NOT EXISTS deployment_config (
 
   -- Status and metadata
   enabled BOOLEAN DEFAULT TRUE,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
 
   -- Ensure one config per repo
   UNIQUE(github_org, github_repo)
@@ -75,8 +75,8 @@ CREATE TABLE IF NOT EXISTS deployment_history (
   -- Status tracking
   -- Values: 'pending', 'building', 'success', 'failed', 'cleaned'
   status VARCHAR(20) NOT NULL DEFAULT 'pending',
-  started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  completed_at TIMESTAMP,
+  started_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  completed_at TIMESTAMPTZ,
 
   -- Deployment result
   deployed_url TEXT,
