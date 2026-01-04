@@ -107,7 +107,7 @@ pub async fn store_job_context(
     installation_id: u64,
     org: &str,
     repo: &str,
-    comment_id: i64,
+    comment_id: Option<i64>,
     commit_sha: &str,
 ) -> Result<()> {
     sqlx::query(
@@ -115,7 +115,7 @@ pub async fn store_job_context(
         INSERT INTO job_context (job_id, installation_id, github_org, github_repo, github_comment_id, commit_sha)
         VALUES ($1, $2, $3, $4, $5, $6)
         ON CONFLICT (job_id) DO UPDATE SET
-            github_comment_id = EXCLUDED.github_comment_id
+            github_comment_id = COALESCE(EXCLUDED.github_comment_id, job_context.github_comment_id)
         "#,
     )
     .bind(job_id)

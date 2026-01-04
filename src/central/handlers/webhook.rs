@@ -187,7 +187,7 @@ async fn process_webhook_event(state: &AppState, event: WebhookEvent) -> anyhow:
                         installation_id,
                         org,
                         repo,
-                        comment.id,
+                        Some(comment.id),
                         &pr_event.pull_request.head.sha,
                     ).await?;
                 }
@@ -328,6 +328,18 @@ async fn process_webhook_event(state: &AppState, event: WebhookEvent) -> anyhow:
                 zone = %zone,
                 "Dispatched main branch build job"
             );
+
+            // Store deployment info for status updates
+            // Push events don't have PR comments, so comment_id is None
+            store_deployment_context(
+                state,
+                job_id,
+                installation_id,
+                org,
+                repo,
+                None,
+                &push_event.after,
+            ).await?;
         }
         WebhookEvent::Ping => {
             tracing::info!("Received ping event");
@@ -344,13 +356,14 @@ async fn process_webhook_event(state: &AppState, event: WebhookEvent) -> anyhow:
 ///
 /// This stores the minimum info needed to update GitHub comments when
 /// status updates arrive from workers.
+/// For push events, comment_id is None since we don't create PR comments.
 async fn store_deployment_context(
     state: &AppState,
     job_id: Uuid,
     installation_id: u64,
     org: &str,
     repo: &str,
-    comment_id: i64,
+    comment_id: Option<i64>,
     commit_sha: &str,
 ) -> anyhow::Result<()> {
     db::store_job_context(&state.db, job_id, installation_id, org, repo, comment_id, commit_sha).await?;
