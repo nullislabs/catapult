@@ -179,17 +179,71 @@ and workers not in the config are automatically disabled.
 
 ### Configure Deployments
 
-Register repositories for deployment. The `environment` field must match a zone
-defined in your `workers` configuration:
+Catapult reads deployment configuration from `.deploy.json` files in your repositories:
 
-```sql
-INSERT INTO deployment_config
-  (github_org, github_repo, environment, domain, subdomain, site_type, enabled)
-VALUES
-  ('nullislabs', 'website', 'nullislabs', 'nullislabs.io', 'www', 'sveltekit', true),
-  ('nullislabs', 'docs', 'nullislabs', 'docs.nullislabs.io', NULL, 'vite', true),
-  ('nullispl', 'portfolio', 'nullispl', 'nullis.pl', NULL, 'zola', true);
+1. **Organization defaults:** `{org}/.github/.deploy.json`
+2. **Repository overrides:** `{org}/{repo}/.deploy.json`
+
+Repository settings override organization defaults.
+
+#### Example Organization Config (`{org}/.github/.deploy.json`)
+
+```json
+{
+  "zone": "nullislabs",
+  "domain_pattern": "{repo}.nxm.rs",
+  "pr_pattern": "pr-{pr}-{repo}.nxm.rs",
+  "enabled": true
+}
 ```
+
+#### Example Repository Config (`{org}/{repo}/.deploy.json`)
+
+```json
+{
+  "build_type": "sveltekit",
+  "build_command": "pnpm build",
+  "output_dir": "build"
+}
+```
+
+#### Configuration Options
+
+| Field | Description | Example |
+|-------|-------------|---------|
+| `zone` | Worker zone to deploy to | `"nullislabs"` |
+| `domain_pattern` | Domain pattern for main branch | `"{repo}.nxm.rs"` |
+| `pr_pattern` | Domain pattern for PR previews | `"pr-{pr}-{repo}.nxm.rs"` |
+| `domain` | Explicit domain (overrides pattern) | `"nxm.rs"` |
+| `subdomain` | Subdomain prefix (used with `domain`) | `"www"` |
+| `build_type` | Build type: `sveltekit`, `vite`, `zola`, `custom` | `"sveltekit"` |
+| `build_command` | Custom build command | `"npm run build"` |
+| `output_dir` | Build output directory | `"dist"` |
+| `enabled` | Enable/disable deployments | `true` |
+
+#### Domain Resolution Examples
+
+**Apex domain (`nxm.rs`):**
+```json
+{ "domain": "nxm.rs" }
+```
+
+**WWW subdomain (`www.nxm.rs`):**
+```json
+{ "domain": "nxm.rs", "subdomain": "www" }
+```
+
+**Pattern-based (`{repo}.nxm.rs`):**
+```json
+{ "domain_pattern": "{repo}.nxm.rs" }
+```
+For repo "website", resolves to `website.nxm.rs`.
+
+**PR previews:** Always use the `pr_pattern`:
+```json
+{ "pr_pattern": "pr-{pr}-{repo}.nxm.rs" }
+```
+For PR #42 on repo "website", resolves to `pr-42-website.nxm.rs`.
 
 ## Step 4: Worker Server Configuration
 
@@ -236,6 +290,17 @@ Add to your NixOS configuration (e.g., `~/.config/nixos/catapult-worker.nix`):
     sitesDir = "/var/www/sites";
 
     logLevel = "catapult=info,tower_http=info";
+
+    # Cloudflare Tunnel integration (optional)
+    # Creates DNS records and tunnel ingress rules automatically
+    cloudflare = {
+      enable = true;
+      apiTokenFile = "/var/lib/catapult/cloudflare-token";
+      accountId = "your-cloudflare-account-id";
+      zoneId = "your-zone-id";
+      tunnelId = "your-tunnel-id";
+      serviceUrl = "http://localhost:8080";  # Where Caddy listens
+    };
   };
 
   # Caddy for serving sites
@@ -290,6 +355,68 @@ scp central:/var/lib/catapult/worker-secret /var/lib/catapult/
 chmod 600 /var/lib/catapult/worker-secret
 chown catapult-worker:catapult-worker /var/lib/catapult/worker-secret
 ```
+
+### Cloudflare Tunnel Setup (Optional)
+
+Catapult can automatically manage DNS records and tunnel ingress rules when
+deploying sites. This requires a remotely-managed Cloudflare Tunnel.
+
+#### 1. Create a Tunnel
+
+In the Cloudflare Zero Trust dashboard:
+
+1. Go to **Networks → Tunnels**
+2. Create a new tunnel (note the **Tunnel ID**)
+3. Configure it as **remotely managed** (not config file based)
+4. Install and run `cloudflared` with the provided token
+
+#### 2. Create an API Token
+
+In Cloudflare dashboard:
+
+1. Go to **My Profile → API Tokens**
+2. Create a token with these permissions:
+   - **Zone > DNS > Edit** (for DNS record management)
+   - **Account > Cloudflare Tunnel > Edit** (for tunnel ingress rules)
+3. Save the token to `/var/lib/catapult/cloudflare-token`
+
+```bash
+echo "your-cloudflare-api-token" > /var/lib/catapult/cloudflare-token
+chmod 600 /var/lib/catapult/cloudflare-token
+chown catapult-worker:catapult-worker /var/lib/catapult/cloudflare-token
+```
+
+#### 3. Find Your IDs
+
+- **Account ID:** Dashboard URL or Overview page sidebar
+- **Zone ID:** Domain overview page sidebar
+- **Tunnel ID:** From tunnel creation or Tunnels list
+
+#### 4. Configure Worker
+
+```nix
+services.catapult.worker.cloudflare = {
+  enable = true;
+  apiTokenFile = "/var/lib/catapult/cloudflare-token";
+  accountId = "f9ff5c79365f8f1851aa90ec0a0c7932";
+  zoneId = "1234567890abcdef";
+  tunnelId = "abc123-def456-ghi789";
+  serviceUrl = "http://localhost:8080";  # Caddy's listen address
+};
+```
+
+#### How It Works
+
+When Catapult deploys a site:
+
+1. **Creates tunnel ingress rule:** `pr-42-website.nxm.rs → http://localhost:8080`
+2. **Creates DNS record:** CNAME `pr-42-website.nxm.rs → {tunnel-id}.cfargotunnel.com`
+3. Traffic flows: User → Cloudflare → Tunnel → Caddy → Site
+
+When a PR is closed:
+
+1. DNS record is deleted
+2. Tunnel ingress rule is removed
 
 ## Step 5: Verification
 
