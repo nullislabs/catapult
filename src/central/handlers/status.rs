@@ -72,64 +72,39 @@ pub async fn handle_status(
 }
 
 async fn process_status_update(state: &AppState, update: StatusUpdate) -> anyhow::Result<()> {
-    // Look up deployment by job_id
-    let deployment = match db::get_deployment_by_job_id(&state.db, update.job_id).await? {
-        Some(d) => d,
+    // Look up job context
+    let context = match db::get_job_context(&state.db, update.job_id).await? {
+        Some(ctx) => ctx,
         None => {
-            tracing::warn!(job_id = %update.job_id, "No deployment found for job_id");
+            tracing::warn!(job_id = %update.job_id, "No job context found for job_id");
             return Ok(());
         }
     };
 
-    // Update deployment status in database
-    db::update_deployment_status(
-        &state.db,
-        deployment.id,
-        update.status,
-        update.deployed_url.as_deref(),
-        update.error_message.as_deref(),
-    )
-    .await?;
-
     tracing::info!(
         job_id = %update.job_id,
-        deployment_id = deployment.id,
         status = %update.status,
-        "Updated deployment status"
+        org = %context.github_org,
+        repo = %context.github_repo,
+        "Received status update"
     );
 
-    // Update GitHub PR comment if this is a PR deployment with a comment
-    if deployment.deployment_type == "pr" && deployment.github_comment_id.is_some() {
-        let comment_id = deployment.github_comment_id.unwrap();
+    // Update GitHub PR comment if we have a comment_id
+    if let Some(comment_id) = context.github_comment_id {
+        // Skip building status (we already posted "Building..." initially)
+        if update.status == JobStatus::Building {
+            return Ok(());
+        }
 
-        // Get the deployment config for org/repo info
-        let config = match db::get_deployment_config_by_id(&state.db, deployment.config_id).await? {
-            Some(c) => c,
-            None => {
-                tracing::warn!(
-                    config_id = deployment.config_id,
-                    "Deployment config not found"
-                );
-                return Ok(());
-            }
-        };
-
-        // Get installation_id
-        let installation_id = match config.installation_id {
-            Some(id) => id as u64,
-            None => {
-                tracing::warn!(
-                    config_id = config.id,
-                    "No installation_id cached for config, cannot update comment"
-                );
-                return Ok(());
-            }
-        };
+        // Skip pending and cleaned statuses
+        if update.status == JobStatus::Pending || update.status == JobStatus::Cleaned {
+            return Ok(());
+        }
 
         // Get a fresh installation token
         let token = state
             .github_app
-            .get_installation_token(&state.http_client, installation_id)
+            .get_installation_token(&state.http_client, context.installation_id as u64)
             .await?;
 
         let github_client = GitHubClient::new(token.token);
@@ -138,25 +113,18 @@ async fn process_status_update(state: &AppState, update: StatusUpdate) -> anyhow
         let comment_body = match update.status {
             JobStatus::Success => {
                 let url = update.deployed_url.as_deref().unwrap_or("(URL not available)");
-                GitHubClient::success_comment(&deployment.commit_sha, url)
+                GitHubClient::success_comment(&context.commit_sha, url)
             }
             JobStatus::Failed => {
                 let error = update.error_message.as_deref().unwrap_or("Unknown error");
-                GitHubClient::failure_comment(&deployment.commit_sha, error)
+                GitHubClient::failure_comment(&context.commit_sha, error)
             }
-            JobStatus::Building => {
-                // Don't update for building status (we already posted "Building..." initially)
-                return Ok(());
-            }
-            JobStatus::Pending | JobStatus::Cleaned => {
-                // Don't update for these statuses
-                return Ok(());
-            }
+            _ => return Ok(()),
         };
 
         // Update the comment
         github_client
-            .update_comment(&config.github_org, &config.github_repo, comment_id, &comment_body)
+            .update_comment(&context.github_org, &context.github_repo, comment_id, &comment_body)
             .await?;
 
         tracing::info!(
