@@ -183,6 +183,16 @@ async fn run_build_pipeline(state: &AppState, job: &BuildJob) -> anyhow::Result<
     )
     .await?;
 
+    // Configure Cloudflare DNS and tunnel ingress
+    // The domain field contains the full hostname (e.g., "pr-42-website.nxm.rs")
+    if state.cloudflare.is_enabled() {
+        tracing::info!(job_id = %job.job_id, hostname = %job.domain, "Configuring Cloudflare route");
+        if let Err(e) = state.cloudflare.ensure_route(&job.domain).await {
+            // Log but don't fail the build - Caddy is already configured
+            tracing::error!(error = %e, hostname = %job.domain, "Failed to configure Cloudflare route");
+        }
+    }
+
     // Cleanup work directory
     let _ = tokio::fs::remove_dir_all(&work_dir).await;
 
