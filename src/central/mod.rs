@@ -2,13 +2,12 @@ use crate::config::CentralConfig;
 use anyhow::Result;
 
 pub mod db;
+mod deploy_config;
 mod dispatch;
 mod github;
 mod handlers;
 mod server;
 mod worker_monitor;
-
-pub use worker_monitor::{MonitorConfig, WorkerMonitor};
 
 /// Run the Central orchestrator
 pub async fn run(config: CentralConfig) -> Result<()> {

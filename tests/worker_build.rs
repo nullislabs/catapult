@@ -205,6 +205,7 @@ fn test_build_context_with_deploy_config_override() {
         build_type: Some(SiteType::Vite),
         build_command: Some("yarn build".to_string()),
         output_dir: Some("out".to_string()),
+        ..Default::default()
     };
 
     // Start with SvelteKit but deploy config overrides to Vite
@@ -221,6 +222,7 @@ fn test_build_context_partial_deploy_config() {
         build_type: None,
         build_command: Some("custom build".to_string()),
         output_dir: None,
+        ..Default::default()
     };
 
     let context = BuildContext::new(SiteType::SvelteKit, Some(deploy_config));

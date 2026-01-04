@@ -53,6 +53,10 @@ pub struct CleanupJob {
 
     /// URL to POST status updates to
     pub callback_url: String,
+
+    /// Domain to remove from DNS/routing (e.g., "pr-42-website.nxm.rs")
+    #[serde(default)]
+    pub domain: Option<String>,
 }
 
 /// Status update sent from Worker to Central
@@ -165,10 +169,42 @@ impl std::str::FromStr for SiteType {
 }
 
 /// Repository deployment configuration (from .deploy.json)
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+///
+/// This can be defined at two levels:
+/// - Organization level: `{org}/.github/.deploy.json` (defaults for all repos)
+/// - Repository level: `{org}/{repo}/.deploy.json` (overrides org defaults)
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeployConfig {
-    /// Build type override
+    // === Deployment routing (typically set at org level) ===
+
+    /// Worker zone/environment to deploy to (e.g., "nxm", "nullislabs")
     #[serde(default)]
+    pub zone: Option<String>,
+
+    /// Domain pattern for main branch deployments
+    /// Supports `{repo}` placeholder (e.g., "{repo}.nxm.rs")
+    #[serde(default)]
+    pub domain_pattern: Option<String>,
+
+    /// Domain pattern for PR preview deployments
+    /// Supports `{repo}` and `{pr}` placeholders (e.g., "pr-{pr}-{repo}.nxm.rs")
+    #[serde(default)]
+    pub pr_pattern: Option<String>,
+
+    // === Per-repo overrides ===
+
+    /// Explicit domain for main branch (overrides domain_pattern)
+    #[serde(default)]
+    pub domain: Option<String>,
+
+    /// Subdomain for main branch (e.g., "www" → www.domain.com)
+    #[serde(default)]
+    pub subdomain: Option<String>,
+
+    // === Build configuration ===
+
+    /// Build type override
+    #[serde(default, alias = "siteType")]
     pub build_type: Option<SiteType>,
 
     /// Custom build command
@@ -178,6 +214,109 @@ pub struct DeployConfig {
     /// Output directory override
     #[serde(default)]
     pub output_dir: Option<String>,
+
+    /// Whether deployments are enabled (default: true)
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+}
+
+fn default_enabled() -> bool {
+    true
+}
+
+impl Default for DeployConfig {
+    fn default() -> Self {
+        Self {
+            zone: None,
+            domain_pattern: None,
+            pr_pattern: None,
+            domain: None,
+            subdomain: None,
+            build_type: None,
+            build_command: None,
+            output_dir: None,
+            enabled: true, // Enabled by default
+        }
+    }
+}
+
+impl DeployConfig {
+    /// Merge another config into this one (other takes precedence for set values)
+    pub fn merge(&mut self, other: &DeployConfig) {
+        if other.zone.is_some() {
+            self.zone = other.zone.clone();
+        }
+        if other.domain_pattern.is_some() {
+            self.domain_pattern = other.domain_pattern.clone();
+        }
+        if other.pr_pattern.is_some() {
+            self.pr_pattern = other.pr_pattern.clone();
+        }
+        if other.domain.is_some() {
+            self.domain = other.domain.clone();
+        }
+        if other.subdomain.is_some() {
+            self.subdomain = other.subdomain.clone();
+        }
+        if other.build_type.is_some() {
+            self.build_type = other.build_type;
+        }
+        if other.build_command.is_some() {
+            self.build_command = other.build_command.clone();
+        }
+        if other.output_dir.is_some() {
+            self.output_dir = other.output_dir.clone();
+        }
+        // enabled is always explicitly set, so always take other's value
+        self.enabled = other.enabled;
+    }
+
+    /// Resolve the main branch domain for a given repo
+    ///
+    /// Resolution order:
+    /// 1. Explicit `domain` (optionally with `subdomain` prefix)
+    /// 2. Domain pattern with `{repo}` substitution
+    pub fn resolve_domain(&self, repo: &str) -> Option<String> {
+        // Explicit domain takes precedence
+        if let Some(domain) = &self.domain {
+            // If subdomain is set, prefix it (e.g., "www" + "nxm.rs" = "www.nxm.rs")
+            if let Some(subdomain) = &self.subdomain {
+                return Some(format!("{}.{}", subdomain, domain));
+            }
+            return Some(domain.clone());
+        }
+
+        // Apply domain pattern (subdomain not used with patterns)
+        if let Some(pattern) = &self.domain_pattern {
+            return Some(pattern.replace("{repo}", &repo.to_lowercase()));
+        }
+
+        None
+    }
+
+    /// Resolve the PR preview domain for a given repo and PR number
+    pub fn resolve_pr_domain(&self, repo: &str, pr_number: u32) -> Option<String> {
+        // Apply PR pattern
+        if let Some(pattern) = &self.pr_pattern {
+            return Some(
+                pattern
+                    .replace("{repo}", &repo.to_lowercase())
+                    .replace("{pr}", &pr_number.to_string()),
+            );
+        }
+
+        // Fall back to default pattern using base domain
+        if let Some(domain) = self.resolve_domain(repo) {
+            return Some(format!("pr-{}-{}.{}", pr_number, repo.to_lowercase(), domain));
+        }
+
+        None
+    }
+
+    /// Check if this config is valid for deployment
+    pub fn is_deployable(&self) -> bool {
+        self.enabled && self.zone.is_some()
+    }
 }
 
 /// Generate a site ID for a deployment
