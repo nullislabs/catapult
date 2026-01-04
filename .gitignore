@@ -22,3 +22,4 @@ lcov.info
 # OS
 .DS_Store
 Thumbs.db
+*.private-key.pem
