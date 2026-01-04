@@ -24,8 +24,14 @@
         # Configure crane with our toolchain
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
 
-        # Source filtering
-        src = craneLib.cleanCargoSource ./.;
+        # Source filtering - include migrations for SQLx
+        # Must filter from original source, not cleanCargoSource (which excludes .sql)
+        sqlFilter = path: _type: builtins.match ".*\.sql$" path != null;
+        src = pkgs.lib.cleanSourceWith {
+          src = ./.;
+          filter = path: type:
+            (sqlFilter path type) || (craneLib.filterCargoSources path type);
+        };
 
         # Common args for crane builds
         commonArgs = {
