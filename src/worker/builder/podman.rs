@@ -179,9 +179,10 @@ async fn run_build_in_container(
             cpu_period: Some(100000),
             cpu_quota: Some(state.config.container_cpu_quota),
             pids_limit: Some(state.config.container_pids_limit),
-            // Security hardening
+            // Security: prevent privilege escalation
+            // Note: We don't drop all capabilities since nix needs CHOWN/SETUID/etc.
+            // Security is provided by: NixOS container + Podman isolation + RFC1918 network blocking
             security_opt: Some(vec!["no-new-privileges:true".to_string()]),
-            cap_drop: Some(vec!["ALL".to_string()]),
             // Temp filesystem for build artifacts
             tmpfs: Some(
                 [("/tmp".to_string(), "size=2G,mode=1777".to_string())]
