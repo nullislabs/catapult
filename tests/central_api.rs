@@ -15,10 +15,7 @@ use tower::util::ServiceExt;
 use uuid::Uuid;
 
 /// Create a minimal test router for status updates
-fn create_test_router(
-    db: sqlx::PgPool,
-    worker_secret: String,
-) -> Router {
+fn create_test_router(db: sqlx::PgPool, worker_secret: String) -> Router {
     use axum::extract::State;
     use axum::http::HeaderMap;
     use bytes::Bytes;
@@ -58,23 +55,12 @@ fn create_test_router(
             Err(_) => return StatusCode::BAD_REQUEST,
         };
 
-        // Look up and update deployment
-        match db::get_deployment_by_job_id(&state.db, status_update.job_id).await {
-            Ok(Some(deployment)) => {
-                if db::update_deployment_status(
-                    &state.db,
-                    deployment.id,
-                    status_update.status,
-                    status_update.deployed_url.as_deref(),
-                    status_update.error_message.as_deref(),
-                )
-                .await
-                .is_ok()
-                {
-                    StatusCode::OK
-                } else {
-                    StatusCode::INTERNAL_SERVER_ERROR
-                }
+        // Look up job context (if it exists)
+        match db::get_job_context(&state.db, status_update.job_id).await {
+            Ok(Some(_context)) => {
+                // In real handler, we'd update the GitHub comment here
+                // For tests, just confirm we found the context
+                StatusCode::OK
             }
             Ok(None) => StatusCode::OK, // Job not found is OK (idempotent)
             Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
@@ -167,39 +153,11 @@ async fn test_status_update_valid_signature() {
     let secret = "test-secret";
     let app = create_test_router(db.pool.clone(), secret.to_string());
 
-    // Create a worker first (FK constraint)
-    db.create_test_worker("production").await;
-
-    // Create a deployment config and deployment
-    let config_id: i32 = sqlx::query_scalar(
-        r#"
-        INSERT INTO deployment_config (github_org, github_repo, environment, domain, site_type, enabled)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        RETURNING id
-        "#,
-    )
-    .bind("testorg")
-    .bind("testrepo")
-    .bind("production")
-    .bind("example.com")
-    .bind("sveltekit")
-    .bind(true)
-    .fetch_one(&db.pool)
-    .await
-    .expect("Failed to insert deployment config");
-
+    // Create a job context
     let job_id = Uuid::new_v4();
-    db::create_deployment(
-        &db.pool,
-        config_id,
-        job_id,
-        "pr",
-        Some(42),
-        "feature",
-        "commit123",
-    )
-    .await
-    .expect("Failed to create deployment");
+    db::store_job_context(&db.pool, job_id, 12345, "testorg", "testrepo", 111, "abc123")
+        .await
+        .expect("Failed to store job context");
 
     // Create signed status update
     let status_update = StatusUpdate {
@@ -226,18 +184,6 @@ async fn test_status_update_valid_signature() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
-
-    // Verify deployment was updated
-    let deployment = db::get_deployment_by_job_id(&db.pool, job_id)
-        .await
-        .expect("Failed to get deployment")
-        .expect("Deployment not found");
-
-    assert_eq!(deployment.status, "success");
-    assert_eq!(
-        deployment.deployed_url,
-        Some("https://pr-42.example.com".to_string())
-    );
 }
 
 #[tokio::test]
@@ -280,39 +226,11 @@ async fn test_status_update_failure() {
     let secret = "test-secret";
     let app = create_test_router(db.pool.clone(), secret.to_string());
 
-    // Create a worker first (FK constraint)
-    db.create_test_worker("production").await;
-
-    // Create deployment
-    let config_id: i32 = sqlx::query_scalar(
-        r#"
-        INSERT INTO deployment_config (github_org, github_repo, environment, domain, site_type, enabled)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        RETURNING id
-        "#,
-    )
-    .bind("testorg")
-    .bind("testrepo")
-    .bind("production")
-    .bind("example.com")
-    .bind("vite")
-    .bind(true)
-    .fetch_one(&db.pool)
-    .await
-    .expect("Failed to insert deployment config");
-
+    // Create a job context
     let job_id = Uuid::new_v4();
-    db::create_deployment(
-        &db.pool,
-        config_id,
-        job_id,
-        "main",
-        None,
-        "main",
-        "abc123",
-    )
-    .await
-    .expect("Failed to create deployment");
+    db::store_job_context(&db.pool, job_id, 12345, "testorg", "testrepo", 222, "def456")
+        .await
+        .expect("Failed to store job context");
 
     // Send failure status
     let status_update = StatusUpdate {
@@ -339,16 +257,4 @@ async fn test_status_update_failure() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
-
-    // Verify deployment was updated
-    let deployment = db::get_deployment_by_job_id(&db.pool, job_id)
-        .await
-        .expect("Failed to get deployment")
-        .expect("Deployment not found");
-
-    assert_eq!(deployment.status, "failed");
-    assert_eq!(
-        deployment.error_message,
-        Some("Build failed: npm install error".to_string())
-    );
 }

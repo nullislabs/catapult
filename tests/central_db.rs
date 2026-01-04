@@ -3,7 +3,6 @@
 mod common;
 
 use catapult::central::db;
-use catapult::shared::JobStatus;
 use common::TestDatabase;
 use uuid::Uuid;
 
@@ -48,374 +47,288 @@ async fn test_worker_not_found() {
 }
 
 #[tokio::test]
-async fn test_deployment_config_crud() {
+async fn test_worker_disabled() {
     let db = TestDatabase::new().await;
 
-    // Create a worker first (FK constraint)
-    db.create_test_worker("production").await;
-
-    // Insert a deployment config
+    // Insert a disabled worker
     sqlx::query(
         r#"
-        INSERT INTO deployment_config (github_org, github_repo, environment, domain, site_type, enabled)
-        VALUES ($1, $2, $3, $4, $5, $6)
+        INSERT INTO workers (environment, endpoint, enabled)
+        VALUES ($1, $2, $3)
         "#,
     )
-    .bind("testorg")
-    .bind("testrepo")
-    .bind("production")
-    .bind("example.com")
-    .bind("sveltekit")
-    .bind(true)
+    .bind("staging")
+    .bind("https://staging-worker.example.com")
+    .bind(false)
     .execute(&db.pool)
     .await
-    .expect("Failed to insert deployment config");
+    .expect("Failed to insert worker");
 
-    // Get deployment config
-    let config = db::get_deployment_config(&db.pool, "testorg", "testrepo")
+    // Should not find disabled worker
+    let worker = db::get_worker(&db.pool, "staging")
         .await
-        .expect("Failed to get deployment config")
-        .expect("Config not found");
+        .expect("Failed to query worker");
 
-    assert_eq!(config.github_org, "testorg");
-    assert_eq!(config.github_repo, "testrepo");
-    assert_eq!(config.domain, "example.com");
-    assert_eq!(config.site_type, "sveltekit");
+    assert!(worker.is_none());
 }
 
 #[tokio::test]
-async fn test_deployment_config_disabled() {
+async fn test_job_context_crud() {
     let db = TestDatabase::new().await;
-
-    // Create a worker first (FK constraint)
-    db.create_test_worker("production").await;
-
-    // Insert a disabled deployment config
-    sqlx::query(
-        r#"
-        INSERT INTO deployment_config (github_org, github_repo, environment, domain, site_type, enabled)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        "#,
-    )
-    .bind("testorg")
-    .bind("testrepo")
-    .bind("production")
-    .bind("example.com")
-    .bind("sveltekit")
-    .bind(false) // disabled
-    .execute(&db.pool)
-    .await
-    .expect("Failed to insert deployment config");
-
-    // Should not find disabled config
-    let config = db::get_deployment_config(&db.pool, "testorg", "testrepo")
-        .await
-        .expect("Failed to get deployment config");
-
-    assert!(config.is_none());
-}
-
-#[tokio::test]
-async fn test_deployment_history_lifecycle() {
-    let db = TestDatabase::new().await;
-
-    // Create a worker first (FK constraint)
-    db.create_test_worker("production").await;
-
-    // First create a deployment config
-    let config_id: i32 = sqlx::query_scalar(
-        r#"
-        INSERT INTO deployment_config (github_org, github_repo, environment, domain, site_type, enabled)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        RETURNING id
-        "#,
-    )
-    .bind("testorg")
-    .bind("testrepo")
-    .bind("production")
-    .bind("example.com")
-    .bind("sveltekit")
-    .bind(true)
-    .fetch_one(&db.pool)
-    .await
-    .expect("Failed to insert deployment config");
-
-    // Create deployment
-    let job_id = Uuid::new_v4();
-    let deployment_id = db::create_deployment(
-        &db.pool,
-        config_id,
-        job_id,
-        "pr",
-        Some(42),
-        "feature-branch",
-        "abc123def456",
-    )
-    .await
-    .expect("Failed to create deployment");
-
-    assert!(deployment_id > 0);
-
-    // Get deployment by job_id
-    let deployment = db::get_deployment_by_job_id(&db.pool, job_id)
-        .await
-        .expect("Failed to get deployment")
-        .expect("Deployment not found");
-
-    assert_eq!(deployment.config_id, config_id);
-    assert_eq!(deployment.job_id, Some(job_id));
-    assert_eq!(deployment.deployment_type, "pr");
-    assert_eq!(deployment.pr_number, Some(42));
-    assert_eq!(deployment.branch, "feature-branch");
-    assert_eq!(deployment.commit_sha, "abc123def456");
-    assert_eq!(deployment.status, "pending");
-
-    // Update deployment status to success
-    db::update_deployment_status(
-        &db.pool,
-        deployment_id,
-        JobStatus::Success,
-        Some("https://pr-42.example.com"),
-        None,
-    )
-    .await
-    .expect("Failed to update deployment status");
-
-    // Verify update
-    let updated = db::get_deployment_by_job_id(&db.pool, job_id)
-        .await
-        .expect("Failed to get deployment")
-        .expect("Deployment not found");
-
-    assert_eq!(updated.status, "success");
-    assert_eq!(
-        updated.deployed_url,
-        Some("https://pr-42.example.com".to_string())
-    );
-    assert!(updated.completed_at.is_some());
-}
-
-#[tokio::test]
-async fn test_deployment_failure() {
-    let db = TestDatabase::new().await;
-
-    // Create a worker first (FK constraint)
-    db.create_test_worker("production").await;
-
-    // Create config and deployment
-    let config_id: i32 = sqlx::query_scalar(
-        r#"
-        INSERT INTO deployment_config (github_org, github_repo, environment, domain, site_type, enabled)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        RETURNING id
-        "#,
-    )
-    .bind("testorg")
-    .bind("testrepo")
-    .bind("production")
-    .bind("example.com")
-    .bind("vite")
-    .bind(true)
-    .fetch_one(&db.pool)
-    .await
-    .expect("Failed to insert deployment config");
 
     let job_id = Uuid::new_v4();
-    let deployment_id = db::create_deployment(
-        &db.pool,
-        config_id,
-        job_id,
-        "main",
-        None,
-        "main",
-        "def456abc789",
-    )
-    .await
-    .expect("Failed to create deployment");
+    let installation_id: u64 = 12345678;
+    let org = "testorg";
+    let repo = "testrepo";
+    let comment_id: i64 = 987654321;
+    let commit_sha = "abc123def456";
 
-    // Update to failed status
-    db::update_deployment_status(
-        &db.pool,
-        deployment_id,
-        JobStatus::Failed,
-        None,
-        Some("Build failed: npm install failed"),
-    )
-    .await
-    .expect("Failed to update deployment status");
-
-    // Verify
-    let deployment = db::get_deployment_by_job_id(&db.pool, job_id)
+    // Store job context
+    db::store_job_context(&db.pool, job_id, installation_id, org, repo, comment_id, commit_sha)
         .await
-        .expect("Failed to get deployment")
-        .expect("Deployment not found");
+        .expect("Failed to store job context");
 
-    assert_eq!(deployment.status, "failed");
-    assert!(deployment.deployed_url.is_none());
-    assert_eq!(
-        deployment.error_message,
-        Some("Build failed: npm install failed".to_string())
-    );
+    // Get job context
+    let context = db::get_job_context(&db.pool, job_id)
+        .await
+        .expect("Failed to get job context")
+        .expect("Job context not found");
+
+    assert_eq!(context.job_id, job_id);
+    assert_eq!(context.installation_id, installation_id as i64);
+    assert_eq!(context.github_org, org);
+    assert_eq!(context.github_repo, repo);
+    assert_eq!(context.github_comment_id, Some(comment_id));
+    assert_eq!(context.commit_sha, commit_sha);
 }
 
 #[tokio::test]
-async fn test_github_comment_id() {
+async fn test_job_context_not_found() {
     let db = TestDatabase::new().await;
 
-    // Create a worker first (FK constraint)
-    db.create_test_worker("production").await;
+    let context = db::get_job_context(&db.pool, Uuid::new_v4())
+        .await
+        .expect("Failed to query job context");
 
-    // Create config and deployment
-    let config_id: i32 = sqlx::query_scalar(
-        r#"
-        INSERT INTO deployment_config (github_org, github_repo, environment, domain, site_type, enabled)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        RETURNING id
-        "#,
-    )
-    .bind("testorg")
-    .bind("testrepo")
-    .bind("production")
-    .bind("example.com")
-    .bind("sveltekit")
-    .bind(true)
-    .fetch_one(&db.pool)
-    .await
-    .expect("Failed to insert deployment config");
+    assert!(context.is_none());
+}
+
+#[tokio::test]
+async fn test_job_context_upsert() {
+    let db = TestDatabase::new().await;
 
     let job_id = Uuid::new_v4();
-    let deployment_id = db::create_deployment(
-        &db.pool,
-        config_id,
-        job_id,
-        "pr",
-        Some(123),
-        "feature",
-        "commit123",
-    )
-    .await
-    .expect("Failed to create deployment");
+    let installation_id: u64 = 12345678;
+    let org = "testorg";
+    let repo = "testrepo";
+    let commit_sha = "abc123";
 
-    // Set GitHub comment ID
-    db::set_github_comment_id(&db.pool, deployment_id, 987654321)
+    // Store job context with initial comment ID
+    db::store_job_context(&db.pool, job_id, installation_id, org, repo, 111, commit_sha)
         .await
-        .expect("Failed to set comment ID");
+        .expect("Failed to store job context");
 
-    // Verify
-    let deployment = db::get_deployment_by_job_id(&db.pool, job_id)
+    // Update with new comment ID
+    db::store_job_context(&db.pool, job_id, installation_id, org, repo, 222, commit_sha)
         .await
-        .expect("Failed to get deployment")
-        .expect("Deployment not found");
+        .expect("Failed to update job context");
 
-    assert_eq!(deployment.github_comment_id, Some(987654321));
+    // Verify the comment ID was updated
+    let context = db::get_job_context(&db.pool, job_id)
+        .await
+        .expect("Failed to get job context")
+        .expect("Job context not found");
+
+    assert_eq!(context.github_comment_id, Some(222));
 }
 
 #[tokio::test]
-async fn test_installation_id_update() {
+async fn test_sync_workers() {
     let db = TestDatabase::new().await;
 
-    // Create a worker first (FK constraint)
-    db.create_test_worker("production").await;
+    use std::collections::HashMap;
 
-    // Create config
-    let config_id: i32 = sqlx::query_scalar(
-        r#"
-        INSERT INTO deployment_config (github_org, github_repo, environment, domain, site_type, enabled)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        RETURNING id
-        "#,
-    )
-    .bind("testorg")
-    .bind("testrepo")
-    .bind("production")
-    .bind("example.com")
-    .bind("sveltekit")
-    .bind(true)
-    .fetch_one(&db.pool)
-    .await
-    .expect("Failed to insert deployment config");
+    // Initial sync with two workers
+    let mut workers = HashMap::new();
+    workers.insert("zone1".to_string(), "https://worker1.example.com".to_string());
+    workers.insert("zone2".to_string(), "https://worker2.example.com".to_string());
 
-    // Initially no installation_id
-    let config = db::get_deployment_config_by_id(&db.pool, config_id)
+    let count = db::sync_workers(&db.pool, &workers)
         .await
-        .expect("Failed to get config")
-        .expect("Config not found");
-    assert!(config.installation_id.is_none());
+        .expect("Failed to sync workers");
 
-    // Update installation_id
-    db::update_installation_id(&db.pool, config_id, 12345678)
-        .await
-        .expect("Failed to update installation_id");
+    assert_eq!(count, 2);
 
-    // Verify
-    let config = db::get_deployment_config_by_id(&db.pool, config_id)
+    // Verify workers exist
+    let worker1 = db::get_worker(&db.pool, "zone1")
         .await
-        .expect("Failed to get config")
-        .expect("Config not found");
-    assert_eq!(config.installation_id, Some(12345678));
+        .expect("Failed to get worker")
+        .expect("Worker not found");
+    assert_eq!(worker1.endpoint, "https://worker1.example.com");
+
+    let worker2 = db::get_worker(&db.pool, "zone2")
+        .await
+        .expect("Failed to get worker")
+        .expect("Worker not found");
+    assert_eq!(worker2.endpoint, "https://worker2.example.com");
+
+    // Sync again with only zone1 - zone2 should be disabled
+    workers.remove("zone2");
+    db::sync_workers(&db.pool, &workers)
+        .await
+        .expect("Failed to sync workers");
+
+    // zone2 should now be disabled (not found)
+    let worker2 = db::get_worker(&db.pool, "zone2")
+        .await
+        .expect("Failed to get worker");
+    assert!(worker2.is_none());
+
+    // zone1 should still exist
+    let worker1 = db::get_worker(&db.pool, "zone1")
+        .await
+        .expect("Failed to get worker");
+    assert!(worker1.is_some());
+}
+
+// ==================== Authorization Tests ====================
+
+#[tokio::test]
+async fn test_authorized_org_crud() {
+    let db = TestDatabase::new().await;
+
+    let zones = vec!["production".to_string(), "staging".to_string()];
+    let domain_patterns = vec!["*.example.com".to_string(), "example.com".to_string()];
+
+    // Create authorized org
+    let org = db::upsert_authorized_org(&db.pool, "testorg", &zones, &domain_patterns)
+        .await
+        .expect("Failed to create authorized org");
+
+    assert_eq!(org.github_org, "testorg");
+    assert_eq!(org.zones, zones);
+    assert_eq!(org.domain_patterns, domain_patterns);
+    assert!(org.enabled);
+
+    // Get authorized org
+    let fetched = db::get_authorized_org(&db.pool, "testorg")
+        .await
+        .expect("Failed to get authorized org")
+        .expect("Org not found");
+
+    assert_eq!(fetched.github_org, "testorg");
+    assert_eq!(fetched.zones, zones);
 }
 
 #[tokio::test]
-async fn test_find_active_pr_deployment() {
+async fn test_authorized_org_case_insensitive() {
     let db = TestDatabase::new().await;
 
-    // Create a worker first (FK constraint)
-    db.create_test_worker("production").await;
+    let zones = vec!["production".to_string()];
+    let domain_patterns = vec!["*.example.com".to_string()];
 
-    // Create config
-    let config_id: i32 = sqlx::query_scalar(
-        r#"
-        INSERT INTO deployment_config (github_org, github_repo, environment, domain, site_type, enabled)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        RETURNING id
-        "#,
-    )
-    .bind("testorg")
-    .bind("testrepo")
-    .bind("production")
-    .bind("example.com")
-    .bind("sveltekit")
-    .bind(true)
-    .fetch_one(&db.pool)
-    .await
-    .expect("Failed to insert deployment config");
-
-    // Create a successful PR deployment
-    let job_id = Uuid::new_v4();
-    let deployment_id = db::create_deployment(
-        &db.pool,
-        config_id,
-        job_id,
-        "pr",
-        Some(42),
-        "feature",
-        "commit123",
-    )
-    .await
-    .expect("Failed to create deployment");
-
-    db::update_deployment_status(
-        &db.pool,
-        deployment_id,
-        JobStatus::Success,
-        Some("https://pr-42.example.com"),
-        None,
-    )
-    .await
-    .expect("Failed to update status");
-
-    // Find active deployment
-    let active = db::find_active_pr_deployment(&db.pool, config_id, 42)
+    // Create with lowercase
+    db::upsert_authorized_org(&db.pool, "MyOrg", &zones, &domain_patterns)
         .await
-        .expect("Failed to find deployment")
-        .expect("Deployment not found");
+        .expect("Failed to create authorized org");
 
-    assert_eq!(active.pr_number, Some(42));
-    assert_eq!(active.status, "success");
-
-    // Should not find non-existent PR
-    let not_found = db::find_active_pr_deployment(&db.pool, config_id, 999)
+    // Fetch with different case
+    let fetched = db::get_authorized_org(&db.pool, "myorg")
         .await
-        .expect("Failed to query");
-    assert!(not_found.is_none());
+        .expect("Failed to get authorized org");
+    assert!(fetched.is_some());
+
+    let fetched = db::get_authorized_org(&db.pool, "MYORG")
+        .await
+        .expect("Failed to get authorized org");
+    assert!(fetched.is_some());
+}
+
+#[tokio::test]
+async fn test_authorized_org_not_found() {
+    let db = TestDatabase::new().await;
+
+    let fetched = db::get_authorized_org(&db.pool, "nonexistent")
+        .await
+        .expect("Failed to query authorized org");
+
+    assert!(fetched.is_none());
+}
+
+#[tokio::test]
+async fn test_authorized_org_update() {
+    let db = TestDatabase::new().await;
+
+    // Create initial
+    let zones1 = vec!["production".to_string()];
+    let domains1 = vec!["*.example.com".to_string()];
+    db::upsert_authorized_org(&db.pool, "testorg", &zones1, &domains1)
+        .await
+        .expect("Failed to create authorized org");
+
+    // Update with new values
+    let zones2 = vec!["production".to_string(), "staging".to_string()];
+    let domains2 = vec!["*.example.com".to_string(), "*.test.com".to_string()];
+    let updated = db::upsert_authorized_org(&db.pool, "testorg", &zones2, &domains2)
+        .await
+        .expect("Failed to update authorized org");
+
+    assert_eq!(updated.zones, zones2);
+    assert_eq!(updated.domain_patterns, domains2);
+}
+
+#[tokio::test]
+async fn test_authorized_org_delete() {
+    let db = TestDatabase::new().await;
+
+    let zones = vec!["production".to_string()];
+    let domains = vec!["*.example.com".to_string()];
+
+    // Create
+    db::upsert_authorized_org(&db.pool, "testorg", &zones, &domains)
+        .await
+        .expect("Failed to create authorized org");
+
+    // Delete
+    let deleted = db::delete_authorized_org(&db.pool, "testorg")
+        .await
+        .expect("Failed to delete authorized org");
+    assert!(deleted);
+
+    // Should not be found (disabled)
+    let fetched = db::get_authorized_org(&db.pool, "testorg")
+        .await
+        .expect("Failed to query authorized org");
+    assert!(fetched.is_none());
+}
+
+#[tokio::test]
+async fn test_list_authorized_orgs() {
+    let db = TestDatabase::new().await;
+
+    // Create multiple orgs
+    db::upsert_authorized_org(
+        &db.pool,
+        "org1",
+        &vec!["zone1".to_string()],
+        &vec!["*.org1.com".to_string()],
+    )
+    .await
+    .expect("Failed to create org1");
+
+    db::upsert_authorized_org(
+        &db.pool,
+        "org2",
+        &vec!["zone2".to_string()],
+        &vec!["*.org2.com".to_string()],
+    )
+    .await
+    .expect("Failed to create org2");
+
+    // List all
+    let orgs = db::list_authorized_orgs(&db.pool)
+        .await
+        .expect("Failed to list authorized orgs");
+
+    assert_eq!(orgs.len(), 2);
 }
