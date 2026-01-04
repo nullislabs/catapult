@@ -157,7 +157,7 @@ async fn process_webhook_event(state: &AppState, event: WebhookEvent) -> anyhow:
                         pr_number: Some(pr_event.number),
                         domain: pr_domain.clone(),
                         site_type: deploy_config.build_type.unwrap_or_default(),
-                        callback_url: format!("https://{}/api/status", state.config.listen_addr),
+                        callback_url: format!("{}/api/status", state.config.callback_base_url),
                         repo_name: repo.to_string(),
                         org_name: org.to_string(),
                         subdomain: None, // PRs don't use subdomain
@@ -199,7 +199,7 @@ async fn process_webhook_event(state: &AppState, event: WebhookEvent) -> anyhow:
                     let job = CleanupJob {
                         job_id: Uuid::new_v4(),
                         site_id: generate_site_id(org, repo, Some(pr_event.number)),
-                        callback_url: format!("https://{}/api/status", state.config.listen_addr),
+                        callback_url: format!("{}/api/status", state.config.callback_base_url),
                         domain: pr_domain,
                     };
 
@@ -307,7 +307,7 @@ async fn process_webhook_event(state: &AppState, event: WebhookEvent) -> anyhow:
                 pr_number: None,
                 domain: main_domain.clone(),
                 site_type: deploy_config.build_type.unwrap_or_default(),
-                callback_url: format!("https://{}/api/status", state.config.listen_addr),
+                callback_url: format!("{}/api/status", state.config.callback_base_url),
                 repo_name: repo.to_string(),
                 org_name: org.to_string(),
                 subdomain: deploy_config.subdomain.clone(),

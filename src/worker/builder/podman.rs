@@ -3,6 +3,7 @@ use bollard::container::{
     Config, CreateContainerOptions, LogsOptions, RemoveContainerOptions, StartContainerOptions,
     WaitContainerOptions,
 };
+use bollard::image::CreateImageOptions;
 use bollard::models::{HostConfig, Mount, MountTypeEnum};
 use bollard::Docker;
 use futures::StreamExt;
@@ -125,6 +126,9 @@ async fn run_build_in_container(
 
     // Ensure the isolated build network exists with RFC1918 blocking
     ensure_build_network(&docker).await?;
+
+    // Ensure the build image exists (pull if needed)
+    ensure_image(&docker, &state.config.build_image).await?;
 
     // Create output directory
     let output_dir = std::env::temp_dir().join(format!("catapult-output-{}", uuid::Uuid::new_v4()));
@@ -341,6 +345,56 @@ async fn cleanup_container(docker: &Docker, container_name: &str) {
             "Failed to remove container"
         );
     }
+}
+
+/// Ensure an image exists locally, pulling it if necessary
+async fn ensure_image(docker: &Docker, image: &str) -> Result<()> {
+    // Check if image already exists
+    match docker.inspect_image(image).await {
+        Ok(_) => {
+            tracing::debug!(image = image, "Image already exists locally");
+            return Ok(());
+        }
+        Err(bollard::errors::Error::DockerResponseServerError { status_code: 404, .. }) => {
+            // Image doesn't exist, need to pull
+            tracing::info!(image = image, "Pulling container image");
+        }
+        Err(e) => {
+            return Err(e).context("Failed to inspect image");
+        }
+    }
+
+    // Parse image name into repository and tag
+    let (repo, tag) = if let Some((r, t)) = image.rsplit_once(':') {
+        (r.to_string(), t.to_string())
+    } else {
+        (image.to_string(), "latest".to_string())
+    };
+
+    // Pull the image
+    let options = CreateImageOptions {
+        from_image: repo.clone(),
+        tag: tag.clone(),
+        ..Default::default()
+    };
+
+    let mut stream = docker.create_image(Some(options), None, None);
+
+    while let Some(result) = stream.next().await {
+        match result {
+            Ok(info) => {
+                if let Some(status) = info.status {
+                    tracing::debug!(image = image, status = %status, "Pull progress");
+                }
+            }
+            Err(e) => {
+                return Err(e).context(format!("Failed to pull image: {}", image));
+            }
+        }
+    }
+
+    tracing::info!(image = image, "Image pulled successfully");
+    Ok(())
 }
 
 #[cfg(test)]

@@ -25,6 +25,10 @@ pub struct CentralConfig {
     /// Address to listen on
     pub listen_addr: SocketAddr,
 
+    /// Base URL for worker callbacks (how workers reach central)
+    /// e.g., "http://catapult-central:8080" for internal network
+    pub callback_base_url: String,
+
     /// Worker endpoints by environment name
     /// e.g., {"production": "https://deployer.example.com", "staging": "https://deployer-staging.example.com"}
     pub workers: HashMap<String, String>,
@@ -63,6 +67,9 @@ impl CentralConfig {
                 .unwrap_or_else(|_| "0.0.0.0:8080".to_string())
                 .parse()
                 .context("LISTEN_ADDR must be a valid socket address")?,
+
+            callback_base_url: std::env::var("CALLBACK_BASE_URL")
+                .context("CALLBACK_BASE_URL environment variable required (e.g., http://catapult-central:8080)")?,
 
             admin_api_key: std::env::var("ADMIN_API_KEY")
                 .context("ADMIN_API_KEY environment variable required")?,
