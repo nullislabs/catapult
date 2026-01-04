@@ -4,53 +4,9 @@ use anyhow::Result;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use super::models::{DeploymentConfig, DeploymentHistory, Worker};
-use crate::shared::JobStatus;
+use super::models::{AuthorizedOrg, Worker};
 
-/// Get deployment configuration for a repository
-pub async fn get_deployment_config(
-    pool: &PgPool,
-    org: &str,
-    repo: &str,
-) -> Result<Option<DeploymentConfig>> {
-    let config = sqlx::query_as::<_, DeploymentConfig>(
-        r#"
-        SELECT id, github_org, github_repo, installation_id, environment, domain, subdomain,
-               site_type, enabled, created_at, updated_at
-        FROM deployment_config
-        WHERE github_org = $1 AND github_repo = $2 AND enabled = true
-        "#,
-    )
-    .bind(org)
-    .bind(repo)
-    .fetch_optional(pool)
-    .await?;
-
-    Ok(config)
-}
-
-/// Update installation_id for a deployment config (cached from webhook)
-pub async fn update_installation_id(
-    pool: &PgPool,
-    config_id: i32,
-    installation_id: u64,
-) -> Result<()> {
-    sqlx::query(
-        r#"
-        UPDATE deployment_config
-        SET installation_id = $1
-        WHERE id = $2
-        "#,
-    )
-    .bind(installation_id as i64)
-    .bind(config_id)
-    .execute(pool)
-    .await?;
-
-    Ok(())
-}
-
-/// Get worker endpoint for an environment
+/// Get worker endpoint for an environment (zone)
 pub async fn get_worker(pool: &PgPool, environment: &str) -> Result<Option<Worker>> {
     let worker = sqlx::query_as::<_, Worker>(
         r#"
@@ -67,6 +23,7 @@ pub async fn get_worker(pool: &PgPool, environment: &str) -> Result<Option<Worke
 }
 
 /// Update worker last_seen timestamp (for heartbeat/health checks)
+#[allow(dead_code)]
 pub async fn update_worker_heartbeat(pool: &PgPool, environment: &str) -> Result<bool> {
     let result = sqlx::query(
         r#"
@@ -88,7 +45,6 @@ pub async fn update_worker_heartbeat(pool: &PgPool, environment: &str) -> Result
 /// - Disables workers that are no longer in the config
 /// - Returns the number of workers synced
 pub async fn sync_workers(pool: &PgPool, workers: &HashMap<String, String>) -> Result<usize> {
-    // Start a transaction
     let mut tx = pool.begin().await?;
 
     // Upsert each worker from config
@@ -130,45 +86,56 @@ pub async fn sync_workers(pool: &PgPool, workers: &HashMap<String, String>) -> R
     Ok(workers.len())
 }
 
-/// Create a new deployment history record
-pub async fn create_deployment(
-    pool: &PgPool,
-    config_id: i32,
-    job_id: Uuid,
-    deployment_type: &str,
-    pr_number: Option<i32>,
-    branch: &str,
-    commit_sha: &str,
-) -> Result<i32> {
-    let row = sqlx::query_scalar::<_, i32>(
-        r#"
-        INSERT INTO deployment_history (config_id, job_id, deployment_type, pr_number, branch, commit_sha, status)
-        VALUES ($1, $2, $3, $4, $5, $6, 'pending')
-        RETURNING id
-        "#,
-    )
-    .bind(config_id)
-    .bind(job_id)
-    .bind(deployment_type)
-    .bind(pr_number)
-    .bind(branch)
-    .bind(commit_sha)
-    .fetch_one(pool)
-    .await?;
+// ==================== Job Context ====================
 
-    Ok(row)
+/// Job context for correlating status updates with GitHub comments
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct JobContext {
+    #[allow(dead_code)]
+    pub job_id: Uuid,
+    pub installation_id: i64,
+    pub github_org: String,
+    pub github_repo: String,
+    pub github_comment_id: Option<i64>,
+    pub commit_sha: String,
 }
 
-/// Get deployment by job_id (for status updates from workers)
-pub async fn get_deployment_by_job_id(
+/// Store job context for status update correlation
+pub async fn store_job_context(
     pool: &PgPool,
     job_id: Uuid,
-) -> Result<Option<DeploymentHistory>> {
-    let deployment = sqlx::query_as::<_, DeploymentHistory>(
+    installation_id: u64,
+    org: &str,
+    repo: &str,
+    comment_id: i64,
+    commit_sha: &str,
+) -> Result<()> {
+    sqlx::query(
         r#"
-        SELECT id, config_id, job_id, deployment_type, pr_number, branch, commit_sha,
-               status, started_at, completed_at, deployed_url, error_message, github_comment_id
-        FROM deployment_history
+        INSERT INTO job_context (job_id, installation_id, github_org, github_repo, github_comment_id, commit_sha)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (job_id) DO UPDATE SET
+            github_comment_id = EXCLUDED.github_comment_id
+        "#,
+    )
+    .bind(job_id)
+    .bind(installation_id as i64)
+    .bind(org)
+    .bind(repo)
+    .bind(comment_id)
+    .bind(commit_sha)
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+/// Get job context by job_id
+pub async fn get_job_context(pool: &PgPool, job_id: Uuid) -> Result<Option<JobContext>> {
+    let context = sqlx::query_as::<_, JobContext>(
+        r#"
+        SELECT job_id, installation_id, github_org, github_repo, github_comment_id, commit_sha
+        FROM job_context
         WHERE job_id = $1
         "#,
     )
@@ -176,120 +143,82 @@ pub async fn get_deployment_by_job_id(
     .fetch_optional(pool)
     .await?;
 
-    Ok(deployment)
+    Ok(context)
 }
 
-/// Get deployment config by ID
-pub async fn get_deployment_config_by_id(
-    pool: &PgPool,
-    config_id: i32,
-) -> Result<Option<DeploymentConfig>> {
-    let config = sqlx::query_as::<_, DeploymentConfig>(
+// ==================== Authorization ====================
+
+/// Get authorized org by GitHub org name (case-insensitive)
+pub async fn get_authorized_org(pool: &PgPool, github_org: &str) -> Result<Option<AuthorizedOrg>> {
+    let org = sqlx::query_as::<_, AuthorizedOrg>(
         r#"
-        SELECT id, github_org, github_repo, installation_id, environment, domain, subdomain,
-               site_type, enabled, created_at, updated_at
-        FROM deployment_config
-        WHERE id = $1
+        SELECT id, github_org, zones, domain_patterns, enabled, created_at, updated_at
+        FROM authorized_orgs
+        WHERE LOWER(github_org) = LOWER($1) AND enabled = true
         "#,
     )
-    .bind(config_id)
+    .bind(github_org)
     .fetch_optional(pool)
     .await?;
 
-    Ok(config)
+    Ok(org)
 }
 
-/// Update deployment status
-pub async fn update_deployment_status(
-    pool: &PgPool,
-    deployment_id: i32,
-    status: JobStatus,
-    deployed_url: Option<&str>,
-    error_message: Option<&str>,
-) -> Result<()> {
-    let completed_at = match status {
-        JobStatus::Success | JobStatus::Failed | JobStatus::Cleaned => {
-            Some(chrono::Utc::now())
-        }
-        _ => None,
-    };
-
-    sqlx::query(
+/// List all authorized orgs
+pub async fn list_authorized_orgs(pool: &PgPool) -> Result<Vec<AuthorizedOrg>> {
+    let orgs = sqlx::query_as::<_, AuthorizedOrg>(
         r#"
-        UPDATE deployment_history
-        SET status = $1, deployed_url = $2, error_message = $3, completed_at = $4
-        WHERE id = $5
+        SELECT id, github_org, zones, domain_patterns, enabled, created_at, updated_at
+        FROM authorized_orgs
+        ORDER BY github_org
         "#,
     )
-    .bind(status.to_string())
-    .bind(deployed_url)
-    .bind(error_message)
-    .bind(completed_at)
-    .bind(deployment_id)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(orgs)
+}
+
+/// Create or update an authorized org
+pub async fn upsert_authorized_org(
+    pool: &PgPool,
+    github_org: &str,
+    zones: &[String],
+    domain_patterns: &[String],
+) -> Result<AuthorizedOrg> {
+    let org = sqlx::query_as::<_, AuthorizedOrg>(
+        r#"
+        INSERT INTO authorized_orgs (github_org, zones, domain_patterns, enabled)
+        VALUES ($1, $2, $3, true)
+        ON CONFLICT (github_org) DO UPDATE SET
+            zones = EXCLUDED.zones,
+            domain_patterns = EXCLUDED.domain_patterns,
+            enabled = true,
+            updated_at = NOW()
+        RETURNING id, github_org, zones, domain_patterns, enabled, created_at, updated_at
+        "#,
+    )
+    .bind(github_org)
+    .bind(zones)
+    .bind(domain_patterns)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(org)
+}
+
+/// Delete (disable) an authorized org
+pub async fn delete_authorized_org(pool: &PgPool, github_org: &str) -> Result<bool> {
+    let result = sqlx::query(
+        r#"
+        UPDATE authorized_orgs
+        SET enabled = false, updated_at = NOW()
+        WHERE LOWER(github_org) = LOWER($1)
+        "#,
+    )
+    .bind(github_org)
     .execute(pool)
     .await?;
 
-    Ok(())
-}
-
-/// Set GitHub comment ID for a deployment
-pub async fn set_github_comment_id(
-    pool: &PgPool,
-    deployment_id: i32,
-    comment_id: i64,
-) -> Result<()> {
-    sqlx::query(
-        r#"
-        UPDATE deployment_history
-        SET github_comment_id = $1
-        WHERE id = $2
-        "#,
-    )
-    .bind(comment_id)
-    .bind(deployment_id)
-    .execute(pool)
-    .await?;
-
-    Ok(())
-}
-
-/// Get deployment by ID
-pub async fn get_deployment(pool: &PgPool, deployment_id: i32) -> Result<Option<DeploymentHistory>> {
-    let deployment = sqlx::query_as::<_, DeploymentHistory>(
-        r#"
-        SELECT id, config_id, job_id, deployment_type, pr_number, branch, commit_sha,
-               status, started_at, completed_at, deployed_url, error_message, github_comment_id
-        FROM deployment_history
-        WHERE id = $1
-        "#,
-    )
-    .bind(deployment_id)
-    .fetch_optional(pool)
-    .await?;
-
-    Ok(deployment)
-}
-
-/// Find active PR deployment for cleanup
-pub async fn find_active_pr_deployment(
-    pool: &PgPool,
-    config_id: i32,
-    pr_number: i32,
-) -> Result<Option<DeploymentHistory>> {
-    let deployment = sqlx::query_as::<_, DeploymentHistory>(
-        r#"
-        SELECT id, config_id, job_id, deployment_type, pr_number, branch, commit_sha,
-               status, started_at, completed_at, deployed_url, error_message, github_comment_id
-        FROM deployment_history
-        WHERE config_id = $1 AND pr_number = $2 AND status = 'success'
-        ORDER BY started_at DESC
-        LIMIT 1
-        "#,
-    )
-    .bind(config_id)
-    .bind(pr_number)
-    .fetch_optional(pool)
-    .await?;
-
-    Ok(deployment)
+    Ok(result.rows_affected() > 0)
 }

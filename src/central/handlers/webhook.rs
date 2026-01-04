@@ -6,6 +6,7 @@ use axum::{
 };
 use uuid::Uuid;
 
+use crate::central::deploy_config::fetch_deploy_config;
 use crate::central::dispatch::dispatch_build_job;
 use crate::central::github::{
     parse_webhook_event, verify_webhook_signature, GitHubClient, PullRequestAction, WebhookEvent,
@@ -76,15 +77,6 @@ async fn process_webhook_event(state: &AppState, event: WebhookEvent) -> anyhow:
                 "Processing pull request event"
             );
 
-            // Look up deployment config
-            let config = match db::get_deployment_config(&state.db, org, repo).await? {
-                Some(config) => config,
-                None => {
-                    tracing::debug!(org, repo, "No deployment config found, ignoring");
-                    return Ok(());
-                }
-            };
-
             // Get installation ID
             let installation_id = pr_event
                 .installation
@@ -92,33 +84,57 @@ async fn process_webhook_event(state: &AppState, event: WebhookEvent) -> anyhow:
                 .map(|i| i.id)
                 .ok_or_else(|| anyhow::anyhow!("Missing installation ID in webhook"))?;
 
-            // Cache installation_id on config for later use (status updates)
-            if config.installation_id.is_none() || config.installation_id != Some(installation_id as i64) {
-                db::update_installation_id(&state.db, config.id, installation_id).await?;
+            // Get installation token (needed to fetch .deploy.json)
+            let token = state
+                .github_app
+                .get_installation_token(&state.http_client, installation_id)
+                .await?;
+
+            // Fetch deploy config from org/.github and repo
+            let deploy_config = fetch_deploy_config(&state.http_client, &token.token, org, repo).await?;
+
+            let deploy_config = match deploy_config {
+                Some(config) if config.is_deployable() => config,
+                Some(_) => {
+                    tracing::debug!(org, repo, "Deployment disabled or no zone configured, ignoring");
+                    return Ok(());
+                }
+                None => {
+                    tracing::debug!(org, repo, "No .deploy.json found, ignoring");
+                    return Ok(());
+                }
+            };
+
+            let zone = deploy_config.zone.as_ref().unwrap(); // Safe: is_deployable checks this
+
+            // Check authorization
+            let auth = db::get_authorized_org(&state.db, org)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("Organization '{}' is not authorized", org))?;
+
+            if !auth.can_use_zone(zone) {
+                anyhow::bail!("Organization '{}' is not authorized to use zone '{}'", org, zone);
             }
+
+            // Get worker for this zone
+            let worker = db::get_worker(&state.db, zone)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("No worker configured for zone: {}", zone))?;
 
             match pr_event.action {
                 PullRequestAction::Opened | PullRequestAction::Synchronize | PullRequestAction::Reopened => {
-                    // Generate job_id upfront
+                    // Resolve PR domain
+                    let pr_domain = deploy_config
+                        .resolve_pr_domain(repo, pr_event.number)
+                        .ok_or_else(|| anyhow::anyhow!("Cannot resolve PR domain - no domain or pattern configured"))?;
+
+                    // Verify domain is allowed
+                    if !auth.can_use_domain(&pr_domain) {
+                        anyhow::bail!("Organization '{}' is not authorized to use domain '{}'", org, pr_domain);
+                    }
+
+                    // Generate job_id
                     let job_id = Uuid::new_v4();
-
-                    // Get installation token
-                    let token = state
-                        .github_app
-                        .get_installation_token(&state.http_client, installation_id)
-                        .await?;
-
-                    // Create deployment record with job_id
-                    let deployment_id = db::create_deployment(
-                        &state.db,
-                        config.id,
-                        job_id,
-                        "pr",
-                        Some(pr_event.number as i32),
-                        &pr_event.pull_request.head.branch,
-                        &pr_event.pull_request.head.sha,
-                    )
-                    .await?;
 
                     // Post "Building..." comment
                     let github_client = GitHubClient::new(token.token.clone());
@@ -131,17 +147,7 @@ async fn process_webhook_event(state: &AppState, event: WebhookEvent) -> anyhow:
                         )
                         .await?;
 
-                    // Store comment ID for later updates
-                    db::set_github_comment_id(&state.db, deployment_id, comment.id).await?;
-
-                    // Get worker for this environment
-                    let worker = db::get_worker(&state.db, &config.environment)
-                        .await?
-                        .ok_or_else(|| {
-                            anyhow::anyhow!("No worker found for environment: {}", config.environment)
-                        })?;
-
-                    // Dispatch build job with same job_id
+                    // Dispatch build job
                     let job = BuildJob {
                         job_id,
                         repo_url: pr_event.repository.clone_url.clone(),
@@ -149,15 +155,12 @@ async fn process_webhook_event(state: &AppState, event: WebhookEvent) -> anyhow:
                         branch: pr_event.pull_request.head.branch.clone(),
                         commit_sha: pr_event.pull_request.head.sha.clone(),
                         pr_number: Some(pr_event.number),
-                        domain: config.domain.clone(),
-                        site_type: config.site_type(),
-                        callback_url: format!(
-                            "https://{}/api/status",
-                            state.config.listen_addr
-                        ),
+                        domain: pr_domain.clone(),
+                        site_type: deploy_config.build_type.unwrap_or_default(),
+                        callback_url: format!("https://{}/api/status", state.config.listen_addr),
                         repo_name: repo.to_string(),
                         org_name: org.to_string(),
-                        subdomain: config.subdomain.clone(),
+                        subdomain: None, // PRs don't use subdomain
                     };
 
                     dispatch_build_job(
@@ -170,47 +173,50 @@ async fn process_webhook_event(state: &AppState, event: WebhookEvent) -> anyhow:
 
                     tracing::info!(
                         job_id = %job_id,
-                        deployment_id = deployment_id,
                         pr = pr_event.number,
-                        "Dispatched build job"
+                        domain = %pr_domain,
+                        zone = %zone,
+                        "Dispatched PR build job"
                     );
+
+                    // Store deployment info for status updates
+                    // We store the comment_id with the job_id for later correlation
+                    store_deployment_context(
+                        state,
+                        job_id,
+                        installation_id,
+                        org,
+                        repo,
+                        comment.id,
+                        &pr_event.pull_request.head.sha,
+                    ).await?;
                 }
                 PullRequestAction::Closed => {
-                    // Clean up PR deployment
-                    if let Some(_deployment) =
-                        db::find_active_pr_deployment(&state.db, config.id, pr_event.number as i32).await?
-                    {
-                        // Get worker
-                        let worker = db::get_worker(&state.db, &config.environment)
-                            .await?
-                            .ok_or_else(|| {
-                                anyhow::anyhow!("No worker found for environment: {}", config.environment)
-                            })?;
+                    // Resolve PR domain for cleanup
+                    let pr_domain = deploy_config.resolve_pr_domain(repo, pr_event.number);
 
-                        // Dispatch cleanup job
-                        let job = CleanupJob {
-                            job_id: Uuid::new_v4(),
-                            site_id: generate_site_id(org, repo, Some(pr_event.number)),
-                            callback_url: format!(
-                                "https://{}/api/status",
-                                state.config.listen_addr
-                            ),
-                        };
+                    // Dispatch cleanup job
+                    let job = CleanupJob {
+                        job_id: Uuid::new_v4(),
+                        site_id: generate_site_id(org, repo, Some(pr_event.number)),
+                        callback_url: format!("https://{}/api/status", state.config.listen_addr),
+                        domain: pr_domain,
+                    };
 
-                        crate::central::dispatch::dispatch_cleanup_job(
-                            &state.http_client,
-                            &worker.endpoint,
-                            &state.config.worker_shared_secret,
-                            &job,
-                        )
-                        .await?;
+                    crate::central::dispatch::dispatch_cleanup_job(
+                        &state.http_client,
+                        &worker.endpoint,
+                        &state.config.worker_shared_secret,
+                        &job,
+                    )
+                    .await?;
 
-                        tracing::info!(
-                            job_id = %job.job_id,
-                            pr = pr_event.number,
-                            "Dispatched cleanup job"
-                        );
-                    }
+                    tracing::info!(
+                        job_id = %job.job_id,
+                        pr = pr_event.number,
+                        zone = %zone,
+                        "Dispatched cleanup job"
+                    );
                 }
                 _ => {
                     tracing::debug!(action = ?pr_event.action, "Ignoring PR action");
@@ -234,15 +240,6 @@ async fn process_webhook_event(state: &AppState, event: WebhookEvent) -> anyhow:
                 "Processing main branch push"
             );
 
-            // Look up deployment config
-            let config = match db::get_deployment_config(&state.db, org, repo).await? {
-                Some(config) => config,
-                None => {
-                    tracing::debug!(org, repo, "No deployment config found, ignoring");
-                    return Ok(());
-                }
-            };
-
             // Get installation ID
             let installation_id = push_event
                 .installation
@@ -250,40 +247,57 @@ async fn process_webhook_event(state: &AppState, event: WebhookEvent) -> anyhow:
                 .map(|i| i.id)
                 .ok_or_else(|| anyhow::anyhow!("Missing installation ID in webhook"))?;
 
-            // Cache installation_id on config
-            if config.installation_id.is_none() || config.installation_id != Some(installation_id as i64) {
-                db::update_installation_id(&state.db, config.id, installation_id).await?;
-            }
-
-            // Generate job_id upfront
-            let job_id = Uuid::new_v4();
-
             // Get installation token
             let token = state
                 .github_app
                 .get_installation_token(&state.http_client, installation_id)
                 .await?;
 
-            // Create deployment record with job_id
-            let deployment_id = db::create_deployment(
-                &state.db,
-                config.id,
-                job_id,
-                "main",
-                None,
-                push_event.branch_name().unwrap_or("main"),
-                &push_event.after,
-            )
-            .await?;
+            // Fetch deploy config
+            let deploy_config = fetch_deploy_config(&state.http_client, &token.token, org, repo).await?;
 
-            // Get worker for this environment
-            let worker = db::get_worker(&state.db, &config.environment)
+            let deploy_config = match deploy_config {
+                Some(config) if config.is_deployable() => config,
+                Some(_) => {
+                    tracing::debug!(org, repo, "Deployment disabled or no zone configured, ignoring");
+                    return Ok(());
+                }
+                None => {
+                    tracing::debug!(org, repo, "No .deploy.json found, ignoring");
+                    return Ok(());
+                }
+            };
+
+            let zone = deploy_config.zone.as_ref().unwrap();
+
+            // Check authorization
+            let auth = db::get_authorized_org(&state.db, org)
                 .await?
-                .ok_or_else(|| {
-                    anyhow::anyhow!("No worker found for environment: {}", config.environment)
-                })?;
+                .ok_or_else(|| anyhow::anyhow!("Organization '{}' is not authorized", org))?;
 
-            // Dispatch build job with same job_id
+            if !auth.can_use_zone(zone) {
+                anyhow::bail!("Organization '{}' is not authorized to use zone '{}'", org, zone);
+            }
+
+            // Resolve main branch domain
+            let main_domain = deploy_config
+                .resolve_domain(repo)
+                .ok_or_else(|| anyhow::anyhow!("Cannot resolve domain - no domain or pattern configured"))?;
+
+            // Verify domain is allowed
+            if !auth.can_use_domain(&main_domain) {
+                anyhow::bail!("Organization '{}' is not authorized to use domain '{}'", org, main_domain);
+            }
+
+            // Get worker for this zone
+            let worker = db::get_worker(&state.db, zone)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("No worker configured for zone: {}", zone))?;
+
+            // Generate job_id
+            let job_id = Uuid::new_v4();
+
+            // Dispatch build job
             let job = BuildJob {
                 job_id,
                 repo_url: push_event.repository.clone_url.clone(),
@@ -291,12 +305,12 @@ async fn process_webhook_event(state: &AppState, event: WebhookEvent) -> anyhow:
                 branch: push_event.branch_name().unwrap_or("main").to_string(),
                 commit_sha: push_event.after.clone(),
                 pr_number: None,
-                domain: config.domain.clone(),
-                site_type: config.site_type(),
+                domain: main_domain.clone(),
+                site_type: deploy_config.build_type.unwrap_or_default(),
                 callback_url: format!("https://{}/api/status", state.config.listen_addr),
                 repo_name: repo.to_string(),
                 org_name: org.to_string(),
-                subdomain: config.subdomain.clone(),
+                subdomain: deploy_config.subdomain.clone(),
             };
 
             dispatch_build_job(
@@ -309,8 +323,9 @@ async fn process_webhook_event(state: &AppState, event: WebhookEvent) -> anyhow:
 
             tracing::info!(
                 job_id = %job_id,
-                deployment_id = deployment_id,
                 commit = &push_event.after,
+                domain = %main_domain,
+                zone = %zone,
                 "Dispatched main branch build job"
             );
         }
@@ -321,6 +336,24 @@ async fn process_webhook_event(state: &AppState, event: WebhookEvent) -> anyhow:
             tracing::debug!(event_type, "Ignoring unknown event type");
         }
     }
+
+    Ok(())
+}
+
+/// Store deployment context for status update correlation
+///
+/// This stores the minimum info needed to update GitHub comments when
+/// status updates arrive from workers.
+async fn store_deployment_context(
+    state: &AppState,
+    job_id: Uuid,
+    installation_id: u64,
+    org: &str,
+    repo: &str,
+    comment_id: i64,
+    commit_sha: &str,
+) -> anyhow::Result<()> {
+    db::store_job_context(&state.db, job_id, installation_id, org, repo, comment_id, commit_sha).await?;
 
     Ok(())
 }

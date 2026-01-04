@@ -11,7 +11,10 @@ use tower_http::trace::TraceLayer;
 
 use crate::central::db;
 use crate::central::github::GitHubApp;
-use crate::central::handlers::{handle_heartbeat, handle_status, handle_webhook};
+use crate::central::handlers::{
+    delete_authorized_org, handle_heartbeat, handle_status, handle_webhook, list_authorized_orgs,
+    upsert_authorized_org,
+};
 use crate::central::worker_monitor::{MonitorConfig, WorkerMonitor};
 use crate::config::CentralConfig;
 
@@ -83,6 +86,10 @@ pub async fn run(config: CentralConfig) -> Result<()> {
         .route("/webhook/github", post(handle_webhook))
         .route("/api/status", post(handle_status))
         .route("/api/workers/heartbeat", post(handle_heartbeat))
+        // Admin API for managing authorizations
+        .route("/api/admin/auth", get(list_authorized_orgs))
+        .route("/api/admin/auth", post(upsert_authorized_org))
+        .route("/api/admin/auth", axum::routing::delete(delete_authorized_org))
         .route("/health", get(health_check))
         .layer(TraceLayer::new_for_http())
         .with_state(state);

@@ -28,6 +28,9 @@ pub struct CentralConfig {
     /// Worker endpoints by environment name
     /// e.g., {"production": "https://deployer.example.com", "staging": "https://deployer-staging.example.com"}
     pub workers: HashMap<String, String>,
+
+    /// Admin API key for managing authorizations
+    pub admin_api_key: String,
 }
 
 impl CentralConfig {
@@ -60,6 +63,9 @@ impl CentralConfig {
                 .unwrap_or_else(|_| "0.0.0.0:8080".to_string())
                 .parse()
                 .context("LISTEN_ADDR must be a valid socket address")?,
+
+            admin_api_key: std::env::var("ADMIN_API_KEY")
+                .context("ADMIN_API_KEY environment variable required")?,
 
             workers,
         })
@@ -143,6 +149,28 @@ pub struct WorkerConfig {
 
     /// PID limit for build containers
     pub container_pids_limit: i64,
+
+    // === Cloudflare Tunnel Configuration ===
+    //
+    // For automatic DNS record and tunnel ingress management:
+    // 1. Create a tunnel in Cloudflare Zero Trust dashboard (remotely managed)
+    // 2. Create an API token with DNS:Edit and Cloudflare Tunnel:Edit permissions
+    // 3. Set these environment variables
+
+    /// Cloudflare API token with DNS:Edit and Cloudflare Tunnel:Edit permissions
+    pub cloudflare_api_token: Option<String>,
+
+    /// Cloudflare Account ID (found in dashboard URL or overview page)
+    pub cloudflare_account_id: Option<String>,
+
+    /// Cloudflare Zone ID for the domain
+    pub cloudflare_zone_id: Option<String>,
+
+    /// Cloudflare Tunnel ID
+    pub cloudflare_tunnel_id: Option<String>,
+
+    /// Local service URL for tunnel routing (defaults to http://localhost:8080)
+    pub cloudflare_service_url: String,
 }
 
 impl WorkerConfig {
@@ -192,6 +220,17 @@ impl WorkerConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(1000),
+
+            cloudflare_api_token: std::env::var("CLOUDFLARE_API_TOKEN").ok(),
+
+            cloudflare_account_id: std::env::var("CLOUDFLARE_ACCOUNT_ID").ok(),
+
+            cloudflare_zone_id: std::env::var("CLOUDFLARE_ZONE_ID").ok(),
+
+            cloudflare_tunnel_id: std::env::var("CLOUDFLARE_TUNNEL_ID").ok(),
+
+            cloudflare_service_url: std::env::var("CLOUDFLARE_SERVICE_URL")
+                .unwrap_or_else(|_| "http://localhost:8080".to_string()),
         })
     }
 
