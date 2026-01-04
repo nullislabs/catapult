@@ -23,6 +23,16 @@
 #     enable = true;
 #     centralUrl = "https://catapult.example.com";
 #     workerSharedSecretFile = "/var/lib/catapult/worker-secret";
+#
+#     # Optional: Cloudflare Tunnel integration for automatic DNS
+#     cloudflare = {
+#       enable = true;
+#       apiTokenFile = "/var/lib/catapult/cloudflare-token";
+#       accountId = "your-account-id";
+#       zoneId = "your-zone-id";
+#       tunnelId = "your-tunnel-id";
+#       serviceUrl = "http://localhost:8080";  # Where Caddy listens
+#     };
 #   };
 #
 { config, lib, pkgs, ... }:
@@ -218,6 +228,41 @@ in
         default = "catapult=info,tower_http=info";
         description = "RUST_LOG filter string";
       };
+
+      # Cloudflare Tunnel integration
+      cloudflare = {
+        enable = mkEnableOption "Cloudflare Tunnel DNS integration";
+
+        apiTokenFile = mkOption {
+          type = types.nullOr types.path;
+          default = null;
+          description = "Path to file containing Cloudflare API token with DNS:Edit and Cloudflare Tunnel:Edit permissions";
+        };
+
+        accountId = mkOption {
+          type = types.nullOr types.str;
+          default = null;
+          description = "Cloudflare Account ID";
+        };
+
+        zoneId = mkOption {
+          type = types.nullOr types.str;
+          default = null;
+          description = "Cloudflare Zone ID for the domain";
+        };
+
+        tunnelId = mkOption {
+          type = types.nullOr types.str;
+          default = null;
+          description = "Cloudflare Tunnel ID";
+        };
+
+        serviceUrl = mkOption {
+          type = types.str;
+          default = "http://localhost:8080";
+          description = "Local service URL for tunnel routing (where Caddy listens)";
+        };
+      };
     };
   };
 
@@ -341,6 +386,11 @@ in
           CONTAINER_MEMORY_LIMIT = toString cfg.worker.containerMemoryLimit;
           CONTAINER_CPU_QUOTA = toString cfg.worker.containerCpuQuota;
           CONTAINER_PIDS_LIMIT = toString cfg.worker.containerPidsLimit;
+        } // lib.optionalAttrs cfg.worker.cloudflare.enable {
+          CLOUDFLARE_ACCOUNT_ID = cfg.worker.cloudflare.accountId;
+          CLOUDFLARE_ZONE_ID = cfg.worker.cloudflare.zoneId;
+          CLOUDFLARE_TUNNEL_ID = cfg.worker.cloudflare.tunnelId;
+          CLOUDFLARE_SERVICE_URL = cfg.worker.cloudflare.serviceUrl;
         };
 
         serviceConfig = {
@@ -354,6 +404,8 @@ in
           # Load secrets from files
           LoadCredential = [
             "worker-secret:${cfg.worker.workerSharedSecretFile}"
+          ] ++ lib.optionals (cfg.worker.cloudflare.enable && cfg.worker.cloudflare.apiTokenFile != null) [
+            "cloudflare-token:${cfg.worker.cloudflare.apiTokenFile}"
           ];
 
           # Worker needs more permissions for Podman
@@ -373,6 +425,9 @@ in
         # Read secrets and set environment variables
         script = ''
           export WORKER_SHARED_SECRET="$(cat $CREDENTIALS_DIRECTORY/worker-secret)"
+          ${lib.optionalString (cfg.worker.cloudflare.enable && cfg.worker.cloudflare.apiTokenFile != null) ''
+            export CLOUDFLARE_API_TOKEN="$(cat $CREDENTIALS_DIRECTORY/cloudflare-token)"
+          ''}
           exec ${cfg.worker.package}/bin/catapult worker
         '';
       };
