@@ -1,3 +1,7 @@
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
@@ -8,8 +12,6 @@ pub struct CloudflareConfig {
     pub api_token: String,
     /// Cloudflare Account ID (for tunnel management)
     pub account_id: String,
-    /// Zone ID for the domain (for DNS management)
-    pub zone_id: String,
     /// Tunnel ID
     pub tunnel_id: String,
     /// Local service URL that the tunnel routes to (e.g., "http://localhost:8080")
@@ -21,10 +23,14 @@ pub struct CloudflareConfig {
 /// This manages both:
 /// 1. DNS records (CNAME pointing to tunnel)
 /// 2. Tunnel ingress rules (hostname → local service)
+///
+/// Zone IDs are dynamically looked up based on the domain being deployed.
 #[derive(Clone)]
 pub struct CloudflareClient {
     http_client: reqwest::Client,
     config: Option<CloudflareConfig>,
+    /// Cache of domain -> zone_id mappings
+    zone_cache: Arc<RwLock<HashMap<String, String>>>,
 }
 
 impl CloudflareClient {
@@ -33,6 +39,7 @@ impl CloudflareClient {
         Self {
             http_client: reqwest::Client::new(),
             config: Some(config),
+            zone_cache: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -41,6 +48,7 @@ impl CloudflareClient {
         Self {
             http_client: reqwest::Client::new(),
             config: None,
+            zone_cache: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -79,37 +87,127 @@ impl CloudflareClient {
         Ok(())
     }
 
+    // ==================== Zone ID Lookup ====================
+
+    /// Extract the base domain from a hostname
+    /// e.g., "pr-123.app.nxm.rs" -> "nxm.rs"
+    /// e.g., "www.nullislabs.io" -> "nullislabs.io"
+    fn extract_base_domain(hostname: &str) -> &str {
+        let parts: Vec<&str> = hostname.split('.').collect();
+        if parts.len() >= 2 {
+            // Take the last two parts as the base domain
+            // This works for most TLDs (.com, .io, .rs, etc.)
+            let start = parts.len() - 2;
+            // Find the position in the original string
+            let mut pos = 0;
+            for (i, part) in parts.iter().enumerate() {
+                if i == start {
+                    return &hostname[pos..];
+                }
+                pos += part.len() + 1; // +1 for the dot
+            }
+        }
+        hostname
+    }
+
+    /// Get zone ID for a domain, using cache if available
+    async fn get_zone_id(&self, hostname: &str, config: &CloudflareConfig) -> Result<String> {
+        let base_domain = Self::extract_base_domain(hostname);
+
+        // Check cache first
+        {
+            let cache = self.zone_cache.read().await;
+            if let Some(zone_id) = cache.get(base_domain) {
+                return Ok(zone_id.clone());
+            }
+        }
+
+        // Look up zone ID from Cloudflare API
+        let zone_id = self.lookup_zone_id(base_domain, config).await?;
+
+        // Cache the result
+        {
+            let mut cache = self.zone_cache.write().await;
+            cache.insert(base_domain.to_string(), zone_id.clone());
+        }
+
+        Ok(zone_id)
+    }
+
+    /// Look up zone ID from Cloudflare API by domain name
+    async fn lookup_zone_id(&self, domain: &str, config: &CloudflareConfig) -> Result<String> {
+        let url = format!(
+            "https://api.cloudflare.com/client/v4/zones?name={}&account.id={}",
+            domain, config.account_id
+        );
+
+        let response = self
+            .http_client
+            .get(&url)
+            .bearer_auth(&config.api_token)
+            .send()
+            .await
+            .context("Failed to query zones")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("Cloudflare Zones API error {}: {}", status, body);
+        }
+
+        let result: CloudflareResponse<Vec<Zone>> = response
+            .json()
+            .await
+            .context("Failed to parse zones response")?;
+
+        result
+            .result
+            .into_iter()
+            .next()
+            .map(|z| z.id)
+            .ok_or_else(|| anyhow::anyhow!("Zone not found for domain: {}", domain))
+    }
+
     // ==================== DNS Management ====================
 
     async fn ensure_dns_record(&self, hostname: &str, config: &CloudflareConfig) -> Result<()> {
+        let zone_id = self.get_zone_id(hostname, config).await?;
         let tunnel_target = format!("{}.cfargotunnel.com", config.tunnel_id);
 
-        let existing = self.get_dns_record(hostname, config).await?;
+        let existing = self.get_dns_record(hostname, &zone_id, config).await?;
 
         if let Some(record) = existing {
             if record.content != tunnel_target {
-                self.update_dns_record(&record.id, hostname, &tunnel_target, config)
+                self.update_dns_record(&record.id, hostname, &tunnel_target, &zone_id, config)
                     .await?;
-                tracing::info!(hostname = hostname, "Updated DNS record");
+                tracing::info!(hostname = hostname, zone_id = %zone_id, "Updated DNS record");
             } else {
                 tracing::debug!(hostname = hostname, "DNS record already up to date");
             }
         } else {
-            self.create_dns_record(hostname, &tunnel_target, config)
+            self.create_dns_record(hostname, &tunnel_target, &zone_id, config)
                 .await?;
-            tracing::info!(hostname = hostname, "Created DNS record");
+            tracing::info!(hostname = hostname, zone_id = %zone_id, "Created DNS record");
         }
 
         Ok(())
     }
 
     async fn remove_dns_record(&self, hostname: &str, config: &CloudflareConfig) -> Result<()> {
-        let existing = self.get_dns_record(hostname, config).await?;
+        let zone_id = match self.get_zone_id(hostname, config).await {
+            Ok(id) => id,
+            Err(e) => {
+                tracing::warn!(hostname = hostname, error = %e, "Could not find zone for DNS removal");
+                return Ok(());
+            }
+        };
+
+        let existing = self.get_dns_record(hostname, &zone_id, config).await?;
 
         if let Some(record) = existing {
             let url = format!(
                 "https://api.cloudflare.com/client/v4/zones/{}/dns_records/{}",
-                config.zone_id, record.id
+                zone_id, record.id
             );
 
             let response = self
@@ -126,7 +224,7 @@ impl CloudflareClient {
                 anyhow::bail!("Cloudflare DNS API error {}: {}", status, body);
             }
 
-            tracing::info!(hostname = hostname, "Removed DNS record");
+            tracing::info!(hostname = hostname, zone_id = %zone_id, "Removed DNS record");
         }
 
         Ok(())
@@ -135,11 +233,12 @@ impl CloudflareClient {
     async fn get_dns_record(
         &self,
         hostname: &str,
+        zone_id: &str,
         config: &CloudflareConfig,
     ) -> Result<Option<DnsRecord>> {
         let url = format!(
             "https://api.cloudflare.com/client/v4/zones/{}/dns_records?name={}",
-            config.zone_id, hostname
+            zone_id, hostname
         );
 
         let response = self
@@ -168,11 +267,12 @@ impl CloudflareClient {
         &self,
         hostname: &str,
         target: &str,
+        zone_id: &str,
         config: &CloudflareConfig,
     ) -> Result<()> {
         let url = format!(
             "https://api.cloudflare.com/client/v4/zones/{}/dns_records",
-            config.zone_id
+            zone_id
         );
 
         let request = CreateDnsRecord {
@@ -206,11 +306,12 @@ impl CloudflareClient {
         record_id: &str,
         hostname: &str,
         target: &str,
+        zone_id: &str,
         config: &CloudflareConfig,
     ) -> Result<()> {
         let url = format!(
             "https://api.cloudflare.com/client/v4/zones/{}/dns_records/{}",
-            config.zone_id, record_id
+            zone_id, record_id
         );
 
         let request = CreateDnsRecord {
@@ -382,6 +483,13 @@ struct CloudflareResponse<T> {
     success: bool,
 }
 
+// --- Zone Types ---
+
+#[derive(Debug, Deserialize)]
+struct Zone {
+    id: String,
+}
+
 // --- DNS Types ---
 
 #[derive(Debug, Deserialize)]
@@ -443,10 +551,19 @@ mod tests {
         let client = CloudflareClient::new(CloudflareConfig {
             api_token: "token".into(),
             account_id: "account".into(),
-            zone_id: "zone".into(),
             tunnel_id: "tunnel".into(),
             service_url: "http://localhost:8080".into(),
         });
         assert!(client.is_enabled());
+    }
+
+    #[test]
+    fn test_extract_base_domain() {
+        assert_eq!(CloudflareClient::extract_base_domain("nxm.rs"), "nxm.rs");
+        assert_eq!(CloudflareClient::extract_base_domain("www.nxm.rs"), "nxm.rs");
+        assert_eq!(CloudflareClient::extract_base_domain("pr-123.nxm.rs"), "nxm.rs");
+        assert_eq!(CloudflareClient::extract_base_domain("app.nullislabs.io"), "nullislabs.io");
+        assert_eq!(CloudflareClient::extract_base_domain("pr-1.app.nullislabs.io"), "nullislabs.io");
+        assert_eq!(CloudflareClient::extract_base_domain("example.com"), "example.com");
     }
 }

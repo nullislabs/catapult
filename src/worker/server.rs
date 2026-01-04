@@ -72,22 +72,20 @@ async fn health_check() -> &'static str {
 
 /// Create Cloudflare client from configuration
 ///
-/// Requires all of: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID,
-/// CLOUDFLARE_ZONE_ID, CLOUDFLARE_TUNNEL_ID
+/// Requires all of: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_TUNNEL_ID
 /// If any are missing, Cloudflare integration is disabled.
+/// Zone IDs are looked up dynamically based on the domain being deployed.
 fn create_cloudflare_client(config: &WorkerConfig) -> CloudflareClient {
     // Check if all required config is present
     let cf_config = match (
         &config.cloudflare_api_token,
         &config.cloudflare_account_id,
-        &config.cloudflare_zone_id,
         &config.cloudflare_tunnel_id,
     ) {
-        (Some(api_token), Some(account_id), Some(zone_id), Some(tunnel_id)) => {
+        (Some(api_token), Some(account_id), Some(tunnel_id)) => {
             Some(CloudflareConfig {
                 api_token: api_token.clone(),
                 account_id: account_id.clone(),
-                zone_id: zone_id.clone(),
                 tunnel_id: tunnel_id.clone(),
                 service_url: config.cloudflare_service_url.clone(),
             })

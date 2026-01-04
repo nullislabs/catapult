@@ -163,9 +163,6 @@ pub struct WorkerConfig {
     /// Cloudflare Account ID (found in dashboard URL or overview page)
     pub cloudflare_account_id: Option<String>,
 
-    /// Cloudflare Zone ID for the domain
-    pub cloudflare_zone_id: Option<String>,
-
     /// Cloudflare Tunnel ID
     pub cloudflare_tunnel_id: Option<String>,
 
@@ -224,8 +221,6 @@ impl WorkerConfig {
             cloudflare_api_token: std::env::var("CLOUDFLARE_API_TOKEN").ok(),
 
             cloudflare_account_id: std::env::var("CLOUDFLARE_ACCOUNT_ID").ok(),
-
-            cloudflare_zone_id: std::env::var("CLOUDFLARE_ZONE_ID").ok(),
 
             cloudflare_tunnel_id: std::env::var("CLOUDFLARE_TUNNEL_ID").ok(),
 

@@ -174,12 +174,6 @@
                     description = "Cloudflare Account ID";
                   };
 
-                  zoneId = lib.mkOption {
-                    type = lib.types.nullOr lib.types.str;
-                    default = null;
-                    description = "Cloudflare Zone ID";
-                  };
-
                   tunnelId = lib.mkOption {
                     type = lib.types.nullOr lib.types.str;
                     default = null;
@@ -264,7 +258,6 @@
                     CADDY_ADMIN_API = cfg.worker.caddyAdminApi;
                   } // lib.optionalAttrs cfg.worker.cloudflare.enable {
                     CLOUDFLARE_ACCOUNT_ID = cfg.worker.cloudflare.accountId;
-                    CLOUDFLARE_ZONE_ID = cfg.worker.cloudflare.zoneId;
                     CLOUDFLARE_TUNNEL_ID = cfg.worker.cloudflare.tunnelId;
                     CLOUDFLARE_SERVICE_URL = cfg.worker.cloudflare.serviceUrl;
                   };
@@ -472,12 +465,6 @@
                   description = "Cloudflare Account ID";
                 };
 
-                zoneId = lib.mkOption {
-                  type = lib.types.nullOr lib.types.str;
-                  default = null;
-                  description = "Cloudflare Zone ID";
-                };
-
                 tunnelId = lib.mkOption {
                   type = lib.types.nullOr lib.types.str;
                   default = null;
@@ -553,7 +540,6 @@
                   CADDY_ADMIN_API = cfg.worker.caddyAdminApi;
                 } // lib.optionalAttrs cfg.worker.cloudflare.enable {
                   CLOUDFLARE_ACCOUNT_ID = cfg.worker.cloudflare.accountId;
-                  CLOUDFLARE_ZONE_ID = cfg.worker.cloudflare.zoneId;
                   CLOUDFLARE_TUNNEL_ID = cfg.worker.cloudflare.tunnelId;
                   CLOUDFLARE_SERVICE_URL = cfg.worker.cloudflare.serviceUrl;
                 };
