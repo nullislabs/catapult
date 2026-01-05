@@ -34,8 +34,17 @@ pub async fn configure_caddy_route(
     // First, try to delete any existing route with this ID
     let _ = remove_caddy_route(http_client, caddy_admin_api, site_id).await;
 
-    // Add the new route
-    let url = format!("{}/config/apps/http/servers/main/routes", caddy_admin_api);
+    // Find the position to insert (before any catch-all route without match rules)
+    let insert_index = find_catch_all_index(http_client, caddy_admin_api).await?;
+
+    // Add the new route at the correct position (before catch-all)
+    let url = match insert_index {
+        Some(idx) => format!(
+            "{}/config/apps/http/servers/main/routes/{}",
+            caddy_admin_api, idx
+        ),
+        None => format!("{}/config/apps/http/servers/main/routes", caddy_admin_api),
+    };
 
     let response = http_client
         .post(&url)
@@ -54,10 +63,46 @@ pub async fn configure_caddy_route(
         site_id = site_id,
         hostname = hostname,
         site_dir = %site_dir.display(),
+        insert_index = ?insert_index,
         "Configured Caddy route"
     );
 
     Ok(())
+}
+
+/// Find the index of a catch-all route (one without match rules)
+/// Returns None if no catch-all is found (append to end)
+async fn find_catch_all_index(
+    http_client: &reqwest::Client,
+    caddy_admin_api: &str,
+) -> Result<Option<usize>> {
+    let url = format!("{}/config/apps/http/servers/main/routes", caddy_admin_api);
+
+    let response = http_client
+        .get(&url)
+        .send()
+        .await
+        .context("Failed to get Caddy routes")?;
+
+    if !response.status().is_success() {
+        // If we can't get routes, just append to end
+        return Ok(None);
+    }
+
+    let routes: Vec<serde_json::Value> = response
+        .json()
+        .await
+        .context("Failed to parse Caddy routes")?;
+
+    // Find first route without a "match" field (catch-all)
+    for (idx, route) in routes.iter().enumerate() {
+        if route.get("match").is_none() {
+            tracing::debug!(index = idx, "Found catch-all route");
+            return Ok(Some(idx));
+        }
+    }
+
+    Ok(None)
 }
 
 /// Remove a Caddy route by ID
