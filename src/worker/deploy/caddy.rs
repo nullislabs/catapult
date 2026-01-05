@@ -35,7 +35,7 @@ pub async fn configure_caddy_route(
     let _ = remove_caddy_route(http_client, caddy_admin_api, site_id).await;
 
     // Add the new route
-    let url = format!("{}/config/apps/http/servers/srv0/routes", caddy_admin_api);
+    let url = format!("{}/config/apps/http/servers/main/routes", caddy_admin_api);
 
     let response = http_client
         .post(&url)
@@ -67,7 +67,7 @@ pub async fn remove_caddy_route(
     site_id: &str,
 ) -> Result<()> {
     let url = format!(
-        "{}/config/apps/http/servers/srv0/routes/{}",
+        "{}/config/apps/http/servers/main/routes/{}",
         caddy_admin_api, site_id
     );
 
