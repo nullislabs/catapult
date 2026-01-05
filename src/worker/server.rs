@@ -8,7 +8,7 @@ use axum::{
 use tower_http::trace::TraceLayer;
 
 use crate::config::WorkerConfig;
-use crate::worker::deploy::{CloudflareClient, CloudflareConfig};
+use crate::worker::deploy::{restore_all_routes, CloudflareClient, CloudflareConfig};
 use crate::worker::handlers::{handle_build, handle_cleanup};
 
 /// Shared application state
@@ -38,11 +38,24 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
     }
 
     // Build application state
+    let http_client = reqwest::Client::new();
     let state = AppState {
         config: Arc::new(config.clone()),
-        http_client: reqwest::Client::new(),
+        http_client: http_client.clone(),
         cloudflare,
     };
+
+    // Restore Caddy routes for existing site deployments
+    match restore_all_routes(&http_client, &config.caddy_admin_api, &config.sites_dir).await {
+        Ok(count) => {
+            if count > 0 {
+                tracing::info!(count, "Restored Caddy routes for existing sites");
+            }
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to restore Caddy routes");
+        }
+    }
 
     // Build router
     let app = Router::new()

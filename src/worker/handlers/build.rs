@@ -137,7 +137,7 @@ async fn execute_build(state: AppState, job: BuildJob) {
 async fn run_build_pipeline(state: &AppState, job: &BuildJob) -> anyhow::Result<String> {
     use crate::shared::generate_site_id;
     use crate::worker::builder::{clone_repository, run_build};
-    use crate::worker::deploy::configure_caddy_route;
+    use crate::worker::deploy::{configure_caddy_route, write_site_metadata, SiteMetadata};
 
     let site_id = generate_site_id(&job.org_name, &job.repo_name, job.pr_number);
 
@@ -165,6 +165,13 @@ async fn run_build_pipeline(state: &AppState, job: &BuildJob) -> anyhow::Result<
 
     // Copy build artifacts
     copy_dir_recursive(&output_dir, &site_dir).await?;
+
+    // Write site metadata for route restoration on restart
+    let metadata = SiteMetadata {
+        site_id: site_id.clone(),
+        domain: job.domain.clone(),
+    };
+    write_site_metadata(&site_dir, &metadata).await?;
 
     // Configure Caddy route
     // Domain is already fully resolved by central server (includes PR subdomain if applicable)
