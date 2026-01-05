@@ -222,3 +222,76 @@ pub async fn delete_authorized_org(pool: &PgPool, github_org: &str) -> Result<bo
 
     Ok(result.rows_affected() > 0)
 }
+
+// ==================== PR Comments ====================
+
+/// Get the existing comment ID for a PR deployment
+pub async fn get_pr_comment(
+    pool: &PgPool,
+    org: &str,
+    repo: &str,
+    pr_number: u32,
+) -> Result<Option<i64>> {
+    let result = sqlx::query_scalar::<_, i64>(
+        r#"
+        SELECT comment_id
+        FROM pr_comments
+        WHERE LOWER(github_org) = LOWER($1)
+          AND LOWER(github_repo) = LOWER($2)
+          AND pr_number = $3
+        "#,
+    )
+    .bind(org)
+    .bind(repo)
+    .bind(pr_number as i32)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(result)
+}
+
+/// Store or update the comment ID for a PR deployment
+pub async fn upsert_pr_comment(
+    pool: &PgPool,
+    org: &str,
+    repo: &str,
+    pr_number: u32,
+    comment_id: i64,
+) -> Result<()> {
+    sqlx::query(
+        r#"
+        INSERT INTO pr_comments (github_org, github_repo, pr_number, comment_id)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (github_org, github_repo, pr_number) DO UPDATE SET
+            comment_id = EXCLUDED.comment_id,
+            updated_at = NOW()
+        "#,
+    )
+    .bind(org)
+    .bind(repo)
+    .bind(pr_number as i32)
+    .bind(comment_id)
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+/// Delete PR comment tracking when PR is closed
+pub async fn delete_pr_comment(pool: &PgPool, org: &str, repo: &str, pr_number: u32) -> Result<bool> {
+    let result = sqlx::query(
+        r#"
+        DELETE FROM pr_comments
+        WHERE LOWER(github_org) = LOWER($1)
+          AND LOWER(github_repo) = LOWER($2)
+          AND pr_number = $3
+        "#,
+    )
+    .bind(org)
+    .bind(repo)
+    .bind(pr_number as i32)
+    .execute(pool)
+    .await?;
+
+    Ok(result.rows_affected() > 0)
+}
