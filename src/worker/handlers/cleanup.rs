@@ -125,13 +125,14 @@ async fn run_cleanup(state: &AppState, job: &CleanupJob) -> anyhow::Result<()> {
 
     // Remove Cloudflare DNS and tunnel ingress (if domain is provided)
     if let Some(domain) = &job.domain
-        && state.cloudflare.is_enabled() {
-            tracing::info!(job_id = %job.job_id, hostname = %domain, "Removing Cloudflare route");
-            if let Err(e) = state.cloudflare.remove_route(domain).await {
-                // Log but don't fail cleanup - Caddy route is already removed
-                tracing::error!(error = %e, hostname = %domain, "Failed to remove Cloudflare route");
-            }
+        && state.cloudflare.is_enabled()
+    {
+        tracing::info!(job_id = %job.job_id, hostname = %domain, "Removing Cloudflare route");
+        if let Err(e) = state.cloudflare.remove_route(domain).await {
+            // Log but don't fail cleanup - Caddy route is already removed
+            tracing::error!(error = %e, hostname = %domain, "Failed to remove Cloudflare route");
         }
+    }
 
     // Remove site directory
     let site_dir = state.config.sites_dir.join(&job.site_id);

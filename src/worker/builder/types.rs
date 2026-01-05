@@ -63,9 +63,11 @@ pub async fn detect_site_type(repo_dir: &std::path::Path) -> SiteType {
     // Check for Zola
     if repo_dir.join("config.toml").exists()
         && let Ok(contents) = tokio::fs::read_to_string(repo_dir.join("config.toml")).await
-            && contents.contains("base_url") && contents.contains("[markdown]") {
-                return SiteType::Zola;
-            }
+        && contents.contains("base_url")
+        && contents.contains("[markdown]")
+    {
+        return SiteType::Zola;
+    }
 
     // Check for custom flake
     if repo_dir.join("flake.nix").exists() {

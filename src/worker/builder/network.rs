@@ -28,13 +28,14 @@ pub async fn ensure_build_network(docker: &Docker) -> Result<()> {
             tracing::debug!(network = BUILD_NETWORK_NAME, "Build network already exists");
             // Network exists, ensure iptables rules are in place
             if let Some(ipam) = network.ipam
-                && let Some(configs) = ipam.config {
-                    for config in configs {
-                        if let Some(subnet) = config.subnet {
-                            ensure_iptables_rules(&subnet).await?;
-                        }
+                && let Some(configs) = ipam.config
+            {
+                for config in configs {
+                    if let Some(subnet) = config.subnet {
+                        ensure_iptables_rules(&subnet).await?;
                     }
                 }
+            }
             return Ok(());
         }
         Err(bollard::errors::Error::DockerResponseServerError {
@@ -106,13 +107,14 @@ async fn find_available_subnet(docker: &Docker) -> Result<String> {
     let mut used_subnets: HashSet<String> = HashSet::new();
     for network in networks {
         if let Some(ipam) = network.ipam
-            && let Some(configs) = ipam.config {
-                for config in configs {
-                    if let Some(subnet) = config.subnet {
-                        used_subnets.insert(subnet);
-                    }
+            && let Some(configs) = ipam.config
+        {
+            for config in configs {
+                if let Some(subnet) = config.subnet {
+                    used_subnets.insert(subnet);
                 }
             }
+        }
     }
 
     // Try subnets in the 10.89.x.0/24 range (x from 0 to 255)
