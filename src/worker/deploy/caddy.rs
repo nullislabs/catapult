@@ -34,30 +34,11 @@ pub async fn configure_caddy_route(
     // First, try to delete any existing route with this ID
     let _ = remove_caddy_route(http_client, caddy_admin_api, site_id).await;
 
-    // Find the position to insert (before any catch-all route without match rules)
+    // Find the position to insert (before any catch-all route)
     let insert_index = find_catch_all_index(http_client, caddy_admin_api).await?;
 
-    // Add the new route at the correct position (before catch-all)
-    let url = match insert_index {
-        Some(idx) => format!(
-            "{}/config/apps/http/servers/main/routes/{}",
-            caddy_admin_api, idx
-        ),
-        None => format!("{}/config/apps/http/servers/main/routes", caddy_admin_api),
-    };
-
-    let response = http_client
-        .post(&url)
-        .json(&route)
-        .send()
-        .await
-        .context("Failed to add Caddy route")?;
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        anyhow::bail!("Caddy API error {}: {}", status, body);
-    }
+    // Add the route (PUT to insert at index, or POST to append)
+    add_caddy_route(http_client, caddy_admin_api, &route, insert_index).await?;
 
     tracing::info!(
         site_id = site_id,
@@ -85,7 +66,6 @@ async fn find_catch_all_index(
         .context("Failed to get Caddy routes")?;
 
     if !response.status().is_success() {
-        // If we can't get routes, just append to end
         return Ok(None);
     }
 
@@ -103,6 +83,52 @@ async fn find_catch_all_index(
     }
 
     Ok(None)
+}
+
+/// Add a route to Caddy, inserting before catch-all if one exists
+///
+/// Uses PUT to insert at a specific index (Caddy API: PUT to /routes/N inserts at N)
+/// or POST to append if no catch-all exists.
+async fn add_caddy_route(
+    http_client: &reqwest::Client,
+    caddy_admin_api: &str,
+    route: &CaddyRoute,
+    insert_index: Option<usize>,
+) -> Result<()> {
+    let (method, url) = match insert_index {
+        Some(idx) => (
+            reqwest::Method::PUT,
+            format!(
+                "{}/config/apps/http/servers/main/routes/{}",
+                caddy_admin_api, idx
+            ),
+        ),
+        None => (
+            reqwest::Method::POST,
+            format!("{}/config/apps/http/servers/main/routes", caddy_admin_api),
+        ),
+    };
+
+    let response = http_client
+        .request(method.clone(), &url)
+        .json(route)
+        .send()
+        .await
+        .context("Failed to add Caddy route")?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        anyhow::bail!("Caddy API error {}: {}", status, body);
+    }
+
+    tracing::info!(
+        method = %method,
+        insert_index = ?insert_index,
+        "Added route to Caddy"
+    );
+
+    Ok(())
 }
 
 /// Remove a Caddy route by ID
