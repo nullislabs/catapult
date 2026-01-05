@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -83,11 +83,7 @@ impl GitHubApp {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            anyhow::bail!(
-                "GitHub API error {}: {}",
-                status,
-                body
-            );
+            anyhow::bail!("GitHub API error {}: {}", status, body);
         }
 
         response
@@ -141,11 +137,9 @@ p8NnJtidt6eNVGzsVler1Ha26Kch8P3EucuTK59xTMkJUV4igAMN
 
         // Verify the JWT can be decoded (header only, we can't verify signature without public key)
         let parts: Vec<&str> = jwt.split('.').collect();
-        let header = base64::Engine::decode(
-            &base64::engine::general_purpose::URL_SAFE_NO_PAD,
-            parts[0],
-        )
-        .expect("Failed to decode header");
+        let header =
+            base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, parts[0])
+                .expect("Failed to decode header");
         let header: serde_json::Value =
             serde_json::from_slice(&header).expect("Failed to parse header");
 

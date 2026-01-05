@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
+use bollard::Docker;
 use bollard::models::IpamConfig;
 use bollard::network::{CreateNetworkOptions, InspectNetworkOptions, ListNetworksOptions};
-use bollard::Docker;
 use std::collections::HashSet;
 use tokio::process::Command;
 
@@ -27,22 +27,24 @@ pub async fn ensure_build_network(docker: &Docker) -> Result<()> {
         Ok(network) => {
             tracing::debug!(network = BUILD_NETWORK_NAME, "Build network already exists");
             // Network exists, ensure iptables rules are in place
-            if let Some(ipam) = network.ipam {
-                if let Some(configs) = ipam.config {
+            if let Some(ipam) = network.ipam
+                && let Some(configs) = ipam.config {
                     for config in configs {
                         if let Some(subnet) = config.subnet {
                             ensure_iptables_rules(&subnet).await?;
                         }
                     }
                 }
-            }
             return Ok(());
         }
         Err(bollard::errors::Error::DockerResponseServerError {
             status_code: 404, ..
         }) => {
             // Network doesn't exist, create it
-            tracing::info!(network = BUILD_NETWORK_NAME, "Creating isolated build network");
+            tracing::info!(
+                network = BUILD_NETWORK_NAME,
+                "Creating isolated build network"
+            );
         }
         Err(e) => {
             return Err(e).context("Failed to inspect build network");
@@ -103,15 +105,14 @@ async fn find_available_subnet(docker: &Docker) -> Result<String> {
     // Collect all subnets in use
     let mut used_subnets: HashSet<String> = HashSet::new();
     for network in networks {
-        if let Some(ipam) = network.ipam {
-            if let Some(configs) = ipam.config {
+        if let Some(ipam) = network.ipam
+            && let Some(configs) = ipam.config {
                 for config in configs {
                     if let Some(subnet) = config.subnet {
                         used_subnets.insert(subnet);
                     }
                 }
             }
-        }
     }
 
     // Try subnets in the 10.89.x.0/24 range (x from 0 to 255)
@@ -119,7 +120,9 @@ async fn find_available_subnet(docker: &Docker) -> Result<String> {
         let subnet = format!("10.89.{}.0/24", x);
         if !used_subnets.contains(&subnet) {
             // Also check for overlapping ranges (though /24s in different octets won't overlap)
-            let overlaps = used_subnets.iter().any(|used| subnets_overlap(&subnet, used));
+            let overlaps = used_subnets
+                .iter()
+                .any(|used| subnets_overlap(&subnet, used));
             if !overlaps {
                 return Ok(subnet);
             }
@@ -215,28 +218,13 @@ async fn ensure_iptables_rules(source_subnet: &str) -> Result<()> {
 
         // Add jump rule from FORWARD chain if not present
         let check_jump = Command::new("iptables")
-            .args([
-                "-C",
-                "FORWARD",
-                "-s",
-                source_subnet,
-                "-j",
-                chain_name,
-            ])
+            .args(["-C", "FORWARD", "-s", source_subnet, "-j", chain_name])
             .output()
             .await;
 
         if check_jump.is_err() || !check_jump.unwrap().status.success() {
             let output = Command::new("iptables")
-                .args([
-                    "-I",
-                    "FORWARD",
-                    "1",
-                    "-s",
-                    source_subnet,
-                    "-j",
-                    chain_name,
-                ])
+                .args(["-I", "FORWARD", "1", "-s", source_subnet, "-j", chain_name])
                 .output()
                 .await
                 .context("Failed to add FORWARD jump rule")?;

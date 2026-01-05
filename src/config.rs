@@ -85,9 +85,12 @@ impl CentralConfig {
         let mut workers = HashMap::new();
 
         for arg in args {
-            let (zone, endpoint) = arg
-                .split_once('=')
-                .with_context(|| format!("Invalid worker format '{}', expected 'zone=https://endpoint'", arg))?;
+            let (zone, endpoint) = arg.split_once('=').with_context(|| {
+                format!(
+                    "Invalid worker format '{}', expected 'zone=https://endpoint'",
+                    arg
+                )
+            })?;
 
             let zone = zone.trim();
             let endpoint = endpoint.trim();
@@ -102,7 +105,10 @@ impl CentralConfig {
                 anyhow::bail!("Worker endpoint must be a URL: '{}'", endpoint);
             }
 
-            if workers.insert(zone.to_string(), endpoint.to_string()).is_some() {
+            if workers
+                .insert(zone.to_string(), endpoint.to_string())
+                .is_some()
+            {
                 anyhow::bail!("Duplicate worker zone: '{}'", zone);
             }
         }
@@ -163,7 +169,6 @@ pub struct WorkerConfig {
     // 1. Create a tunnel in Cloudflare Zero Trust dashboard (remotely managed)
     // 2. Create an API token with DNS:Edit and Cloudflare Tunnel:Edit permissions
     // 3. Set these environment variables
-
     /// Cloudflare API token with DNS:Edit and Cloudflare Tunnel:Edit permissions
     pub cloudflare_api_token: Option<String>,
 

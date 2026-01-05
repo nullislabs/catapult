@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use axum::{
-    routing::{get, post},
     Router,
+    routing::{get, post},
 };
 use tower_http::trace::TraceLayer;
 
@@ -59,9 +59,7 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
 
     tracing::info!(addr = %config.listen_addr, "Server listening");
 
-    axum::serve(listener, app)
-        .await
-        .context("Server error")?;
+    axum::serve(listener, app).await.context("Server error")?;
 
     Ok(())
 }
@@ -82,14 +80,12 @@ fn create_cloudflare_client(config: &WorkerConfig) -> CloudflareClient {
         &config.cloudflare_account_id,
         &config.cloudflare_tunnel_id,
     ) {
-        (Some(api_token), Some(account_id), Some(tunnel_id)) => {
-            Some(CloudflareConfig {
-                api_token: api_token.clone(),
-                account_id: account_id.clone(),
-                tunnel_id: tunnel_id.clone(),
-                service_url: config.cloudflare_service_url.clone(),
-            })
-        }
+        (Some(api_token), Some(account_id), Some(tunnel_id)) => Some(CloudflareConfig {
+            api_token: api_token.clone(),
+            account_id: account_id.clone(),
+            tunnel_id: tunnel_id.clone(),
+            service_url: config.cloudflare_service_url.clone(),
+        }),
         _ => None,
     };
 

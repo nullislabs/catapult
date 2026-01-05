@@ -52,11 +52,7 @@ pub struct WorkerMonitor {
 
 impl WorkerMonitor {
     /// Create a new worker monitor
-    pub fn new(
-        db: PgPool,
-        workers: HashMap<String, String>,
-        config: MonitorConfig,
-    ) -> Self {
+    pub fn new(db: PgPool, workers: HashMap<String, String>, config: MonitorConfig) -> Self {
         let http_client = reqwest::Client::builder()
             .timeout(config.request_timeout)
             .build()
@@ -163,11 +159,7 @@ impl WorkerMonitor {
     async fn check_worker_health(&self, zone: &str, endpoint: &str) -> Result<()> {
         let health_url = format!("{}/health", endpoint);
 
-        let response = self
-            .http_client
-            .get(&health_url)
-            .send()
-            .await?;
+        let response = self.http_client.get(&health_url).send().await?;
 
         if !response.status().is_success() {
             anyhow::bail!("Health check returned status {}", response.status());

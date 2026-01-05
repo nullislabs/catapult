@@ -8,7 +8,7 @@ use axum::{
 use crate::central::db;
 use crate::central::github::GitHubClient;
 use crate::central::server::AppState;
-use crate::shared::{auth::verify_signature, JobStatus, StatusUpdate};
+use crate::shared::{JobStatus, StatusUpdate, auth::verify_signature};
 
 /// Handle status updates from workers
 pub async fn handle_status(
@@ -112,7 +112,10 @@ async fn process_status_update(state: &AppState, update: StatusUpdate) -> anyhow
         // Build the comment body based on status
         let comment_body = match update.status {
             JobStatus::Success => {
-                let url = update.deployed_url.as_deref().unwrap_or("(URL not available)");
+                let url = update
+                    .deployed_url
+                    .as_deref()
+                    .unwrap_or("(URL not available)");
                 GitHubClient::success_comment(&context.commit_sha, url)
             }
             JobStatus::Failed => {
@@ -124,7 +127,12 @@ async fn process_status_update(state: &AppState, update: StatusUpdate) -> anyhow
 
         // Update the comment
         github_client
-            .update_comment(&context.github_org, &context.github_repo, comment_id, &comment_body)
+            .update_comment(
+                &context.github_org,
+                &context.github_repo,
+                comment_id,
+                &comment_body,
+            )
             .await?;
 
         tracing::info!(

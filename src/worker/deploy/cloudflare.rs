@@ -346,9 +346,11 @@ impl CloudflareClient {
         let mut tunnel_config = self.get_tunnel_config(config).await?;
 
         // Check if hostname already exists in ingress rules
-        let exists = tunnel_config.config.ingress.iter().any(|rule| {
-            rule.hostname.as_deref() == Some(hostname)
-        });
+        let exists = tunnel_config
+            .config
+            .ingress
+            .iter()
+            .any(|rule| rule.hostname.as_deref() == Some(hostname));
 
         if exists {
             tracing::debug!(hostname = hostname, "Tunnel ingress rule already exists");
@@ -374,7 +376,12 @@ impl CloudflareClient {
         tunnel_config.config.ingress.insert(insert_pos, new_rule);
 
         // Ensure there's a catch-all at the end
-        if !tunnel_config.config.ingress.iter().any(|r| r.hostname.is_none()) {
+        if !tunnel_config
+            .config
+            .ingress
+            .iter()
+            .any(|r| r.hostname.is_none())
+        {
             tunnel_config.config.ingress.push(TunnelIngressRule {
                 hostname: None,
                 service: "http_status:404".to_string(),
@@ -382,7 +389,8 @@ impl CloudflareClient {
             });
         }
 
-        self.update_tunnel_config(config, &tunnel_config.config).await?;
+        self.update_tunnel_config(config, &tunnel_config.config)
+            .await?;
 
         tracing::info!(
             hostname = hostname,
@@ -397,16 +405,18 @@ impl CloudflareClient {
         let mut tunnel_config = self.get_tunnel_config(config).await?;
 
         let original_len = tunnel_config.config.ingress.len();
-        tunnel_config.config.ingress.retain(|rule| {
-            rule.hostname.as_deref() != Some(hostname)
-        });
+        tunnel_config
+            .config
+            .ingress
+            .retain(|rule| rule.hostname.as_deref() != Some(hostname));
 
         if tunnel_config.config.ingress.len() == original_len {
             tracing::debug!(hostname = hostname, "Tunnel ingress rule not found");
             return Ok(());
         }
 
-        self.update_tunnel_config(config, &tunnel_config.config).await?;
+        self.update_tunnel_config(config, &tunnel_config.config)
+            .await?;
 
         tracing::info!(hostname = hostname, "Removed tunnel ingress rule");
 
@@ -560,10 +570,25 @@ mod tests {
     #[test]
     fn test_extract_base_domain() {
         assert_eq!(CloudflareClient::extract_base_domain("nxm.rs"), "nxm.rs");
-        assert_eq!(CloudflareClient::extract_base_domain("www.nxm.rs"), "nxm.rs");
-        assert_eq!(CloudflareClient::extract_base_domain("pr-123.nxm.rs"), "nxm.rs");
-        assert_eq!(CloudflareClient::extract_base_domain("app.nullislabs.io"), "nullislabs.io");
-        assert_eq!(CloudflareClient::extract_base_domain("pr-1.app.nullislabs.io"), "nullislabs.io");
-        assert_eq!(CloudflareClient::extract_base_domain("example.com"), "example.com");
+        assert_eq!(
+            CloudflareClient::extract_base_domain("www.nxm.rs"),
+            "nxm.rs"
+        );
+        assert_eq!(
+            CloudflareClient::extract_base_domain("pr-123.nxm.rs"),
+            "nxm.rs"
+        );
+        assert_eq!(
+            CloudflareClient::extract_base_domain("app.nullislabs.io"),
+            "nullislabs.io"
+        );
+        assert_eq!(
+            CloudflareClient::extract_base_domain("pr-1.app.nullislabs.io"),
+            "nullislabs.io"
+        );
+        assert_eq!(
+            CloudflareClient::extract_base_domain("example.com"),
+            "example.com"
+        );
     }
 }

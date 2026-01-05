@@ -2,11 +2,11 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use axum::{
-    routing::{get, post},
     Router,
+    routing::{get, post},
 };
-use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
+use sqlx::postgres::PgPoolOptions;
 use tower_http::trace::TraceLayer;
 
 use crate::central::db;
@@ -63,11 +63,8 @@ pub async fn run(config: CentralConfig) -> Result<()> {
         }
 
         // Start worker health monitor
-        let monitor = WorkerMonitor::new(
-            db.clone(),
-            config.workers.clone(),
-            MonitorConfig::default(),
-        );
+        let monitor =
+            WorkerMonitor::new(db.clone(), config.workers.clone(), MonitorConfig::default());
         monitor.start();
     } else {
         tracing::warn!("No workers configured - deployments will fail until workers are added");
@@ -89,7 +86,10 @@ pub async fn run(config: CentralConfig) -> Result<()> {
         // Admin API for managing authorizations
         .route("/api/admin/auth", get(list_authorized_orgs))
         .route("/api/admin/auth", post(upsert_authorized_org))
-        .route("/api/admin/auth", axum::routing::delete(delete_authorized_org))
+        .route(
+            "/api/admin/auth",
+            axum::routing::delete(delete_authorized_org),
+        )
         .route("/health", get(health_check))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
@@ -101,9 +101,7 @@ pub async fn run(config: CentralConfig) -> Result<()> {
 
     tracing::info!(addr = %config.listen_addr, "Server listening");
 
-    axum::serve(listener, app)
-        .await
-        .context("Server error")?;
+    axum::serve(listener, app).await.context("Server error")?;
 
     Ok(())
 }

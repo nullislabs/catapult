@@ -52,8 +52,7 @@ pub fn verify_signature(secret: &[u8], body: &[u8], signature: &str, timestamp: 
 
 /// Compute HMAC-SHA256 signature
 fn compute_signature(secret: &[u8], body: &[u8], timestamp: u64) -> String {
-    let mut mac =
-        HmacSha256::new_from_slice(secret).expect("HMAC can take key of any size");
+    let mut mac = HmacSha256::new_from_slice(secret).expect("HMAC can take key of any size");
 
     // Include timestamp in the signed data
     mac.update(&timestamp.to_be_bytes());
@@ -79,8 +78,7 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 ///
 /// GitHub signatures do not include timestamps, so no replay protection
 pub fn verify_github_signature(secret: &[u8], payload: &[u8], signature: &str) -> bool {
-    let mut mac =
-        HmacSha256::new_from_slice(secret).expect("HMAC can take key of any size");
+    let mut mac = HmacSha256::new_from_slice(secret).expect("HMAC can take key of any size");
     mac.update(payload);
 
     let expected = format!("sha256={}", hex::encode(mac.finalize().into_bytes()));
@@ -134,7 +132,12 @@ mod tests {
 
         // Recompute signature with old timestamp
         let old_signature = compute_signature(secret, body, old_timestamp);
-        assert!(!verify_signature(secret, body, &old_signature, old_timestamp));
+        assert!(!verify_signature(
+            secret,
+            body,
+            &old_signature,
+            old_timestamp
+        ));
     }
 
     #[test]

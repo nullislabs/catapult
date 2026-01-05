@@ -34,13 +34,13 @@
 //! 3. System socket at /run/podman/podman.sock (requires proper permissions)
 
 use anyhow::Result;
+use bollard::Docker;
 use bollard::container::{
     Config, CreateContainerOptions, LogsOptions, RemoveContainerOptions, StartContainerOptions,
     WaitContainerOptions,
 };
 use bollard::models::{HostConfig, Mount, MountTypeEnum};
 use bollard::network::ListNetworksOptions;
-use bollard::Docker;
 use futures::StreamExt;
 use tempfile::TempDir;
 
@@ -595,7 +595,7 @@ async fn test_container_network_external_access() {
 #[tokio::test]
 #[ignore = "Requires rootful Podman for iptables rules"]
 async fn test_build_network_blocks_rfc1918() {
-    use catapult::worker::builder::network::{ensure_build_network, BUILD_NETWORK_NAME};
+    use catapult::worker::builder::network::{BUILD_NETWORK_NAME, ensure_build_network};
 
     // This test requires rootful Podman because:
     // 1. The build network uses iptables rules to block RFC1918
@@ -779,7 +779,11 @@ echo '==> Build complete'
 
     let config = Config {
         image: Some(image),
-        cmd: Some(vec!["sh".to_string(), "-c".to_string(), build_script.to_string()]),
+        cmd: Some(vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            build_script.to_string(),
+        ]),
         working_dir: Some("/workspace".to_string()),
         host_config: Some(HostConfig {
             mounts: Some(vec![
@@ -799,7 +803,7 @@ echo '==> Build complete'
                 },
             ]),
             memory: Some(512 * 1024 * 1024), // 512MB
-            cpu_quota: Some(100000),          // 1 CPU
+            cpu_quota: Some(100000),         // 1 CPU
             pids_limit: Some(500),
             security_opt: Some(vec!["no-new-privileges:true".to_string()]),
             cap_drop: Some(vec!["ALL".to_string()]),

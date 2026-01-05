@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 
-use crate::shared::{auth::sign_request, StatusUpdate};
+use crate::shared::{StatusUpdate, auth::sign_request};
 
 /// Send a status update to Central
 pub async fn send_status_update(

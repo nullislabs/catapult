@@ -86,8 +86,7 @@ async fn fetch_config_file(
         .decode(content_response.content.replace('\n', ""))
         .context("Failed to decode base64 content")?;
 
-    let content = String::from_utf8(content_bytes)
-        .context("Config file is not valid UTF-8")?;
+    let content = String::from_utf8(content_bytes).context("Config file is not valid UTF-8")?;
 
     // Parse JSON
     let config: DeployConfig = serde_json::from_str(&content)
@@ -134,7 +133,10 @@ mod tests {
         // Repo overrides applied
         assert_eq!(org_config.domain, Some("nxm.rs".to_string()));
         assert_eq!(org_config.subdomain, Some("www".to_string()));
-        assert_eq!(org_config.build_type, Some(crate::shared::SiteType::SvelteKit));
+        assert_eq!(
+            org_config.build_type,
+            Some(crate::shared::SiteType::SvelteKit)
+        );
     }
 
     #[test]
@@ -144,8 +146,14 @@ mod tests {
             ..Default::default()
         };
 
-        assert_eq!(config.resolve_domain("website"), Some("website.nxm.rs".to_string()));
-        assert_eq!(config.resolve_domain("MyRepo"), Some("myrepo.nxm.rs".to_string()));
+        assert_eq!(
+            config.resolve_domain("website"),
+            Some("website.nxm.rs".to_string())
+        );
+        assert_eq!(
+            config.resolve_domain("MyRepo"),
+            Some("myrepo.nxm.rs".to_string())
+        );
     }
 
     #[test]

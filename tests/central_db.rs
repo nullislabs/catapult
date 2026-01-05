@@ -84,9 +84,17 @@ async fn test_job_context_crud() {
     let commit_sha = "abc123def456";
 
     // Store job context
-    db::store_job_context(&db.pool, job_id, installation_id, org, repo, comment_id, commit_sha)
-        .await
-        .expect("Failed to store job context");
+    db::store_job_context(
+        &db.pool,
+        job_id,
+        installation_id,
+        org,
+        repo,
+        comment_id,
+        commit_sha,
+    )
+    .await
+    .expect("Failed to store job context");
 
     // Get job context
     let context = db::get_job_context(&db.pool, job_id)
@@ -124,14 +132,30 @@ async fn test_job_context_upsert() {
     let commit_sha = "abc123";
 
     // Store job context with initial comment ID
-    db::store_job_context(&db.pool, job_id, installation_id, org, repo, 111, commit_sha)
-        .await
-        .expect("Failed to store job context");
+    db::store_job_context(
+        &db.pool,
+        job_id,
+        installation_id,
+        org,
+        repo,
+        111,
+        commit_sha,
+    )
+    .await
+    .expect("Failed to store job context");
 
     // Update with new comment ID
-    db::store_job_context(&db.pool, job_id, installation_id, org, repo, 222, commit_sha)
-        .await
-        .expect("Failed to update job context");
+    db::store_job_context(
+        &db.pool,
+        job_id,
+        installation_id,
+        org,
+        repo,
+        222,
+        commit_sha,
+    )
+    .await
+    .expect("Failed to update job context");
 
     // Verify the comment ID was updated
     let context = db::get_job_context(&db.pool, job_id)
@@ -150,8 +174,14 @@ async fn test_sync_workers() {
 
     // Initial sync with two workers
     let mut workers = HashMap::new();
-    workers.insert("zone1".to_string(), "https://worker1.example.com".to_string());
-    workers.insert("zone2".to_string(), "https://worker2.example.com".to_string());
+    workers.insert(
+        "zone1".to_string(),
+        "https://worker1.example.com".to_string(),
+    );
+    workers.insert(
+        "zone2".to_string(),
+        "https://worker2.example.com".to_string(),
+    );
 
     let count = db::sync_workers(&db.pool, &workers)
         .await

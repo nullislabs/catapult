@@ -5,7 +5,7 @@ use axum::{
     response::IntoResponse,
 };
 
-use crate::shared::{auth::verify_signature, BuildJob, JobStatus, StatusUpdate};
+use crate::shared::{BuildJob, JobStatus, StatusUpdate, auth::verify_signature};
 use crate::worker::callback::send_status_update;
 use crate::worker::server::AppState;
 
@@ -147,7 +147,8 @@ async fn run_build_pipeline(state: &AppState, job: &BuildJob) -> anyhow::Result<
 
     // Clone repository
     tracing::info!(job_id = %job.job_id, "Cloning repository");
-    let repo_dir = clone_repository(&job.repo_url, &job.git_token, &job.commit_sha, &work_dir).await?;
+    let repo_dir =
+        clone_repository(&job.repo_url, &job.git_token, &job.commit_sha, &work_dir).await?;
 
     // Run build in container
     tracing::info!(job_id = %job.job_id, "Running build");
@@ -166,11 +167,8 @@ async fn run_build_pipeline(state: &AppState, job: &BuildJob) -> anyhow::Result<
     copy_dir_recursive(&output_dir, &site_dir).await?;
 
     // Configure Caddy route
-    let deployed_url = crate::shared::generate_preview_url(
-        &job.domain,
-        &job.repo_name,
-        job.pr_number,
-    );
+    let deployed_url =
+        crate::shared::generate_preview_url(&job.domain, &job.repo_name, job.pr_number);
 
     configure_caddy_route(
         &state.http_client,

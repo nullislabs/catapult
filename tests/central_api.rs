@@ -3,13 +3,13 @@
 mod common;
 
 use axum::{
+    Router,
     body::Body,
     http::{Request, StatusCode},
     routing::{get, post},
-    Router,
 };
 use catapult::central::db;
-use catapult::shared::{auth::sign_request, JobStatus, StatusUpdate};
+use catapult::shared::{JobStatus, StatusUpdate, auth::sign_request};
 use common::TestDatabase;
 use tower::util::ServiceExt;
 use uuid::Uuid;
@@ -155,9 +155,11 @@ async fn test_status_update_valid_signature() {
 
     // Create a job context
     let job_id = Uuid::new_v4();
-    db::store_job_context(&db.pool, job_id, 12345, "testorg", "testrepo", 111, "abc123")
-        .await
-        .expect("Failed to store job context");
+    db::store_job_context(
+        &db.pool, job_id, 12345, "testorg", "testrepo", 111, "abc123",
+    )
+    .await
+    .expect("Failed to store job context");
 
     // Create signed status update
     let status_update = StatusUpdate {
@@ -228,9 +230,11 @@ async fn test_status_update_failure() {
 
     // Create a job context
     let job_id = Uuid::new_v4();
-    db::store_job_context(&db.pool, job_id, 12345, "testorg", "testrepo", 222, "def456")
-        .await
-        .expect("Failed to store job context");
+    db::store_job_context(
+        &db.pool, job_id, 12345, "testorg", "testrepo", 222, "def456",
+    )
+    .await
+    .expect("Failed to store job context");
 
     // Send failure status
     let status_update = StatusUpdate {

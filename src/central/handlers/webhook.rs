@@ -6,13 +6,13 @@ use axum::{
 };
 use uuid::Uuid;
 
+use crate::central::db;
 use crate::central::deploy_config::fetch_deploy_config;
 use crate::central::dispatch::dispatch_build_job;
 use crate::central::github::{
-    parse_webhook_event, verify_webhook_signature, GitHubClient, PullRequestAction, WebhookEvent,
+    GitHubClient, PullRequestAction, WebhookEvent, parse_webhook_event, verify_webhook_signature,
 };
 use crate::central::server::AppState;
-use crate::central::db;
 use crate::shared::{BuildJob, CleanupJob, generate_site_id};
 
 /// Handle incoming GitHub webhooks
@@ -91,12 +91,17 @@ async fn process_webhook_event(state: &AppState, event: WebhookEvent) -> anyhow:
                 .await?;
 
             // Fetch deploy config from org/.github and repo
-            let deploy_config = fetch_deploy_config(&state.http_client, &token.token, org, repo).await?;
+            let deploy_config =
+                fetch_deploy_config(&state.http_client, &token.token, org, repo).await?;
 
             let deploy_config = match deploy_config {
                 Some(config) if config.is_deployable() => config,
                 Some(_) => {
-                    tracing::debug!(org, repo, "Deployment disabled or no zone configured, ignoring");
+                    tracing::debug!(
+                        org,
+                        repo,
+                        "Deployment disabled or no zone configured, ignoring"
+                    );
                     return Ok(());
                 }
                 None => {
@@ -113,7 +118,11 @@ async fn process_webhook_event(state: &AppState, event: WebhookEvent) -> anyhow:
                 .ok_or_else(|| anyhow::anyhow!("Organization '{}' is not authorized", org))?;
 
             if !auth.can_use_zone(zone) {
-                anyhow::bail!("Organization '{}' is not authorized to use zone '{}'", org, zone);
+                anyhow::bail!(
+                    "Organization '{}' is not authorized to use zone '{}'",
+                    org,
+                    zone
+                );
             }
 
             // Get worker for this zone
@@ -122,15 +131,25 @@ async fn process_webhook_event(state: &AppState, event: WebhookEvent) -> anyhow:
                 .ok_or_else(|| anyhow::anyhow!("No worker configured for zone: {}", zone))?;
 
             match pr_event.action {
-                PullRequestAction::Opened | PullRequestAction::Synchronize | PullRequestAction::Reopened => {
+                PullRequestAction::Opened
+                | PullRequestAction::Synchronize
+                | PullRequestAction::Reopened => {
                     // Resolve PR domain
                     let pr_domain = deploy_config
                         .resolve_pr_domain(repo, pr_event.number)
-                        .ok_or_else(|| anyhow::anyhow!("Cannot resolve PR domain - no domain or pattern configured"))?;
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "Cannot resolve PR domain - no domain or pattern configured"
+                            )
+                        })?;
 
                     // Verify domain is allowed
                     if !auth.can_use_domain(&pr_domain) {
-                        anyhow::bail!("Organization '{}' is not authorized to use domain '{}'", org, pr_domain);
+                        anyhow::bail!(
+                            "Organization '{}' is not authorized to use domain '{}'",
+                            org,
+                            pr_domain
+                        );
                     }
 
                     // Generate job_id
@@ -189,7 +208,8 @@ async fn process_webhook_event(state: &AppState, event: WebhookEvent) -> anyhow:
                         repo,
                         Some(comment.id),
                         &pr_event.pull_request.head.sha,
-                    ).await?;
+                    )
+                    .await?;
                 }
                 PullRequestAction::Closed => {
                     // Resolve PR domain for cleanup
@@ -226,7 +246,10 @@ async fn process_webhook_event(state: &AppState, event: WebhookEvent) -> anyhow:
         WebhookEvent::Push(push_event) => {
             // Only process pushes to main branch
             if !push_event.is_main_branch() {
-                tracing::debug!(ref_name = push_event.git_ref, "Ignoring non-main branch push");
+                tracing::debug!(
+                    ref_name = push_event.git_ref,
+                    "Ignoring non-main branch push"
+                );
                 return Ok(());
             }
 
@@ -254,12 +277,17 @@ async fn process_webhook_event(state: &AppState, event: WebhookEvent) -> anyhow:
                 .await?;
 
             // Fetch deploy config
-            let deploy_config = fetch_deploy_config(&state.http_client, &token.token, org, repo).await?;
+            let deploy_config =
+                fetch_deploy_config(&state.http_client, &token.token, org, repo).await?;
 
             let deploy_config = match deploy_config {
                 Some(config) if config.is_deployable() => config,
                 Some(_) => {
-                    tracing::debug!(org, repo, "Deployment disabled or no zone configured, ignoring");
+                    tracing::debug!(
+                        org,
+                        repo,
+                        "Deployment disabled or no zone configured, ignoring"
+                    );
                     return Ok(());
                 }
                 None => {
@@ -276,17 +304,25 @@ async fn process_webhook_event(state: &AppState, event: WebhookEvent) -> anyhow:
                 .ok_or_else(|| anyhow::anyhow!("Organization '{}' is not authorized", org))?;
 
             if !auth.can_use_zone(zone) {
-                anyhow::bail!("Organization '{}' is not authorized to use zone '{}'", org, zone);
+                anyhow::bail!(
+                    "Organization '{}' is not authorized to use zone '{}'",
+                    org,
+                    zone
+                );
             }
 
             // Resolve main branch domain
-            let main_domain = deploy_config
-                .resolve_domain(repo)
-                .ok_or_else(|| anyhow::anyhow!("Cannot resolve domain - no domain or pattern configured"))?;
+            let main_domain = deploy_config.resolve_domain(repo).ok_or_else(|| {
+                anyhow::anyhow!("Cannot resolve domain - no domain or pattern configured")
+            })?;
 
             // Verify domain is allowed
             if !auth.can_use_domain(&main_domain) {
-                anyhow::bail!("Organization '{}' is not authorized to use domain '{}'", org, main_domain);
+                anyhow::bail!(
+                    "Organization '{}' is not authorized to use domain '{}'",
+                    org,
+                    main_domain
+                );
             }
 
             // Get worker for this zone
@@ -339,7 +375,8 @@ async fn process_webhook_event(state: &AppState, event: WebhookEvent) -> anyhow:
                 repo,
                 None,
                 &push_event.after,
-            ).await?;
+            )
+            .await?;
         }
         WebhookEvent::Ping => {
             tracing::info!("Received ping event");
@@ -366,7 +403,16 @@ async fn store_deployment_context(
     comment_id: Option<i64>,
     commit_sha: &str,
 ) -> anyhow::Result<()> {
-    db::store_job_context(&state.db, job_id, installation_id, org, repo, comment_id, commit_sha).await?;
+    db::store_job_context(
+        &state.db,
+        job_id,
+        installation_id,
+        org,
+        repo,
+        comment_id,
+        commit_sha,
+    )
+    .await?;
 
     Ok(())
 }

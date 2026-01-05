@@ -176,7 +176,6 @@ impl std::str::FromStr for SiteType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeployConfig {
     // === Deployment routing (typically set at org level) ===
-
     /// Worker zone/environment to deploy to (e.g., "nxm", "nullislabs")
     #[serde(default)]
     pub zone: Option<String>,
@@ -192,7 +191,6 @@ pub struct DeployConfig {
     pub pr_pattern: Option<String>,
 
     // === Per-repo overrides ===
-
     /// Explicit domain for main branch (overrides domain_pattern)
     #[serde(default)]
     pub domain: Option<String>,
@@ -202,7 +200,6 @@ pub struct DeployConfig {
     pub subdomain: Option<String>,
 
     // === Build configuration ===
-
     /// Build type override
     #[serde(default, alias = "siteType")]
     pub build_type: Option<SiteType>,
@@ -307,7 +304,12 @@ impl DeployConfig {
 
         // Fall back to default pattern using base domain
         if let Some(domain) = self.resolve_domain(repo) {
-            return Some(format!("pr-{}-{}.{}", pr_number, repo.to_lowercase(), domain));
+            return Some(format!(
+                "pr-{}-{}.{}",
+                pr_number,
+                repo.to_lowercase(),
+                domain
+            ));
         }
 
         None
@@ -365,7 +367,10 @@ mod tests {
 
     #[test]
     fn test_site_type_from_str() {
-        assert_eq!("sveltekit".parse::<SiteType>().unwrap(), SiteType::SvelteKit);
+        assert_eq!(
+            "sveltekit".parse::<SiteType>().unwrap(),
+            SiteType::SvelteKit
+        );
         assert_eq!("VITE".parse::<SiteType>().unwrap(), SiteType::Vite);
         assert!("unknown".parse::<SiteType>().is_err());
     }

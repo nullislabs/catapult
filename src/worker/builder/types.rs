@@ -51,27 +51,21 @@ impl BuildContext {
 /// Try to auto-detect the site type from repository contents
 pub async fn detect_site_type(repo_dir: &std::path::Path) -> SiteType {
     // Check for SvelteKit
-    if repo_dir.join("svelte.config.js").exists()
-        || repo_dir.join("svelte.config.ts").exists()
-    {
+    if repo_dir.join("svelte.config.js").exists() || repo_dir.join("svelte.config.ts").exists() {
         return SiteType::SvelteKit;
     }
 
     // Check for Vite
-    if repo_dir.join("vite.config.js").exists()
-        || repo_dir.join("vite.config.ts").exists()
-    {
+    if repo_dir.join("vite.config.js").exists() || repo_dir.join("vite.config.ts").exists() {
         return SiteType::Vite;
     }
 
     // Check for Zola
-    if repo_dir.join("config.toml").exists() {
-        if let Ok(contents) = tokio::fs::read_to_string(repo_dir.join("config.toml")).await {
-            if contents.contains("base_url") && contents.contains("[markdown]") {
+    if repo_dir.join("config.toml").exists()
+        && let Ok(contents) = tokio::fs::read_to_string(repo_dir.join("config.toml")).await
+            && contents.contains("base_url") && contents.contains("[markdown]") {
                 return SiteType::Zola;
             }
-        }
-    }
 
     // Check for custom flake
     if repo_dir.join("flake.nix").exists() {

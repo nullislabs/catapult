@@ -1,8 +1,8 @@
 //! Common test utilities and fixtures
 
 use sqlx::PgPool;
-use testcontainers::runners::AsyncRunner;
 use testcontainers::ContainerAsync;
+use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::postgres::Postgres;
 
 /// Test database container with connection pool
@@ -25,10 +25,7 @@ impl TestDatabase {
             .await
             .expect("Failed to get port");
 
-        let database_url = format!(
-            "postgres://postgres:postgres@{}:{}/postgres",
-            host, port
-        );
+        let database_url = format!("postgres://postgres:postgres@{}:{}/postgres", host, port);
 
         // Create connection pool
         let pool = PgPool::connect(&database_url)

@@ -1,8 +1,8 @@
 use axum::{
+    Json,
     extract::State,
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
-    Json,
 };
 use serde::{Deserialize, Serialize};
 
@@ -64,7 +64,11 @@ pub async fn list_authorized_orgs(
     headers: HeaderMap,
 ) -> impl IntoResponse {
     if !verify_admin_key(&headers, &state.config.admin_api_key) {
-        return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "Invalid or missing API key"}))).into_response();
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error": "Invalid or missing API key"})),
+        )
+            .into_response();
     }
 
     match db::list_authorized_orgs(&state.db).await {
@@ -74,7 +78,11 @@ pub async fn list_authorized_orgs(
         }
         Err(e) => {
             tracing::error!(error = %e, "Failed to list authorized orgs");
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "Database error"}))).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "Database error"})),
+            )
+                .into_response()
         }
     }
 }
@@ -86,21 +94,44 @@ pub async fn upsert_authorized_org(
     Json(request): Json<UpsertAuthRequest>,
 ) -> impl IntoResponse {
     if !verify_admin_key(&headers, &state.config.admin_api_key) {
-        return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "Invalid or missing API key"}))).into_response();
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error": "Invalid or missing API key"})),
+        )
+            .into_response();
     }
 
     // Validate request
     if request.github_org.is_empty() {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "github_org is required"}))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "github_org is required"})),
+        )
+            .into_response();
     }
     if request.zones.is_empty() {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "At least one zone is required"}))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "At least one zone is required"})),
+        )
+            .into_response();
     }
     if request.domain_patterns.is_empty() {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "At least one domain pattern is required"}))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "At least one domain pattern is required"})),
+        )
+            .into_response();
     }
 
-    match db::upsert_authorized_org(&state.db, &request.github_org, &request.zones, &request.domain_patterns).await {
+    match db::upsert_authorized_org(
+        &state.db,
+        &request.github_org,
+        &request.zones,
+        &request.domain_patterns,
+    )
+    .await
+    {
         Ok(org) => {
             tracing::info!(
                 github_org = %org.github_org,
@@ -113,7 +144,11 @@ pub async fn upsert_authorized_org(
         }
         Err(e) => {
             tracing::error!(error = %e, "Failed to upsert authorized org");
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "Database error"}))).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "Database error"})),
+            )
+                .into_response()
         }
     }
 }
@@ -125,7 +160,11 @@ pub async fn delete_authorized_org(
     Json(request): Json<DeleteAuthRequest>,
 ) -> impl IntoResponse {
     if !verify_admin_key(&headers, &state.config.admin_api_key) {
-        return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "Invalid or missing API key"}))).into_response();
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error": "Invalid or missing API key"})),
+        )
+            .into_response();
     }
 
     match db::delete_authorized_org(&state.db, &request.github_org).await {
@@ -134,12 +173,20 @@ pub async fn delete_authorized_org(
                 tracing::info!(github_org = %request.github_org, "Authorized org deleted");
                 (StatusCode::OK, Json(serde_json::json!({"deleted": true}))).into_response()
             } else {
-                (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Organization not found"}))).into_response()
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(serde_json::json!({"error": "Organization not found"})),
+                )
+                    .into_response()
             }
         }
         Err(e) => {
             tracing::error!(error = %e, "Failed to delete authorized org");
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "Database error"}))).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "Database error"})),
+            )
+                .into_response()
         }
     }
 }

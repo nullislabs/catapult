@@ -16,7 +16,13 @@ pub async fn clone_repository(
 
     // Clone with depth 1 for speed (we'll fetch the specific commit)
     let output = Command::new("git")
-        .args(["clone", "--depth", "1", &auth_url, repo_dir.to_str().unwrap()])
+        .args([
+            "clone",
+            "--depth",
+            "1",
+            &auth_url,
+            repo_dir.to_str().unwrap(),
+        ])
         .current_dir(work_dir)
         .output()
         .await

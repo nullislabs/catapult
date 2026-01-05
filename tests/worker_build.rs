@@ -3,7 +3,7 @@
 mod common;
 
 use catapult::shared::{DeployConfig, SiteType};
-use catapult::worker::builder::types::{detect_site_type, load_deploy_config, BuildContext};
+use catapult::worker::builder::types::{BuildContext, detect_site_type, load_deploy_config};
 use std::fs;
 use tempfile::TempDir;
 

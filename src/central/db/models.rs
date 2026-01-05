@@ -44,11 +44,11 @@ impl AuthorizedOrg {
         let domain_lower = domain.to_lowercase();
         self.domain_patterns.iter().any(|pattern| {
             let pattern_lower = pattern.to_lowercase();
-            if pattern_lower.starts_with("*.") {
+            if let Some(apex) = pattern_lower.strip_prefix("*.") {
                 // Wildcard pattern: *.example.com matches foo.example.com and bar.example.com
                 let suffix = &pattern_lower[1..]; // ".example.com"
                 domain_lower.ends_with(suffix) && domain_lower.len() > suffix.len()
-                    || domain_lower == pattern_lower[2..] // Also match the apex (example.com)
+                    || domain_lower == apex // Also match the apex (example.com)
             } else {
                 // Exact match
                 domain_lower == pattern_lower

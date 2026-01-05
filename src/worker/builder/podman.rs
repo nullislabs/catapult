@@ -1,25 +1,21 @@
 use anyhow::{Context, Result};
+use bollard::Docker;
 use bollard::container::{
     Config, CreateContainerOptions, LogsOptions, RemoveContainerOptions, StartContainerOptions,
     WaitContainerOptions,
 };
 use bollard::image::CreateImageOptions;
 use bollard::models::{HostConfig, Mount, MountTypeEnum};
-use bollard::Docker;
 use futures::StreamExt;
 use std::path::{Path, PathBuf};
 
 use crate::shared::{BuildJob, SiteType};
-use crate::worker::builder::network::{ensure_build_network, BUILD_NETWORK_NAME};
-use crate::worker::builder::types::{detect_site_type, load_deploy_config, BuildContext};
+use crate::worker::builder::network::{BUILD_NETWORK_NAME, ensure_build_network};
+use crate::worker::builder::types::{BuildContext, detect_site_type, load_deploy_config};
 use crate::worker::server::AppState;
 
 /// Run a build - either in a container or directly depending on config
-pub async fn run_build(
-    state: &AppState,
-    job: &BuildJob,
-    repo_dir: &Path,
-) -> Result<PathBuf> {
+pub async fn run_build(state: &AppState, job: &BuildJob, repo_dir: &Path) -> Result<PathBuf> {
     // Load deploy config if present
     let deploy_config = load_deploy_config(repo_dir).await;
 
@@ -318,10 +314,7 @@ fn build_container_script(context: &BuildContext) -> String {
         "echo '==> Copying output from {} to /output'\n",
         context.output_dir
     ));
-    script.push_str(&format!(
-        "cp -r '{}'/. /output/\n",
-        context.output_dir
-    ));
+    script.push_str(&format!("cp -r '{}'/. /output/\n", context.output_dir));
 
     script.push_str("echo '==> Build complete'\n");
 
@@ -356,7 +349,9 @@ async fn ensure_image(docker: &Docker, image: &str) -> Result<()> {
             tracing::debug!(image = image, "Image already exists locally");
             return Ok(());
         }
-        Err(bollard::errors::Error::DockerResponseServerError { status_code: 404, .. }) => {
+        Err(bollard::errors::Error::DockerResponseServerError {
+            status_code: 404, ..
+        }) => {
             // Image doesn't exist, need to pull
             tracing::info!(image = image, "Pulling container image");
         }

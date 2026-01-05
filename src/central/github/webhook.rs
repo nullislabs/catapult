@@ -103,7 +103,10 @@ pub struct Installation {
 }
 
 /// Parse a webhook event from the event type and payload
-pub fn parse_webhook_event(event_type: &str, payload: &[u8]) -> Result<WebhookEvent, serde_json::Error> {
+pub fn parse_webhook_event(
+    event_type: &str,
+    payload: &[u8],
+) -> Result<WebhookEvent, serde_json::Error> {
     match event_type {
         "pull_request" => {
             let event: PullRequestEvent = serde_json::from_slice(payload)?;

@@ -5,7 +5,7 @@ use axum::{
     response::IntoResponse,
 };
 
-use crate::shared::{auth::verify_signature, CleanupJob, JobStatus, StatusUpdate};
+use crate::shared::{CleanupJob, JobStatus, StatusUpdate, auth::verify_signature};
 use crate::worker::callback::send_status_update;
 use crate::worker::deploy::remove_caddy_route;
 use crate::worker::server::AppState;
@@ -116,18 +116,22 @@ async fn execute_cleanup(state: AppState, job: CleanupJob) {
 
 async fn run_cleanup(state: &AppState, job: &CleanupJob) -> anyhow::Result<()> {
     // Remove Caddy route
-    remove_caddy_route(&state.http_client, &state.config.caddy_admin_api, &job.site_id).await?;
+    remove_caddy_route(
+        &state.http_client,
+        &state.config.caddy_admin_api,
+        &job.site_id,
+    )
+    .await?;
 
     // Remove Cloudflare DNS and tunnel ingress (if domain is provided)
-    if let Some(domain) = &job.domain {
-        if state.cloudflare.is_enabled() {
+    if let Some(domain) = &job.domain
+        && state.cloudflare.is_enabled() {
             tracing::info!(job_id = %job.job_id, hostname = %domain, "Removing Cloudflare route");
             if let Err(e) = state.cloudflare.remove_route(domain).await {
                 // Log but don't fail cleanup - Caddy route is already removed
                 tracing::error!(error = %e, hostname = %domain, "Failed to remove Cloudflare route");
             }
         }
-    }
 
     // Remove site directory
     let site_dir = state.config.sites_dir.join(&job.site_id);

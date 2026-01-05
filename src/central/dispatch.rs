@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 
-use crate::shared::{auth::sign_request, BuildJob, CleanupJob};
+use crate::shared::{BuildJob, CleanupJob, auth::sign_request};
 
 /// Dispatch a build job to a worker
 pub async fn dispatch_build_job(
