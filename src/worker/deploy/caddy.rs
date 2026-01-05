@@ -3,26 +3,24 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 /// Configure a Caddy route for a deployment via the admin API
+///
+/// The domain is already fully resolved by central server (includes PR subdomain if applicable),
+/// so we use it directly as the hostname.
 pub async fn configure_caddy_route(
     http_client: &reqwest::Client,
     caddy_admin_api: &str,
     site_id: &str,
     site_dir: &Path,
     domain: &str,
-    repo_name: &str,
-    pr_number: Option<u32>,
 ) -> Result<()> {
-    // Generate the hostname for this deployment
-    let hostname = match pr_number {
-        Some(pr) => format!("pr-{}-{}.{}", pr, repo_name.to_lowercase(), domain),
-        None => domain.to_string(),
-    };
+    // Domain is already the full hostname (resolved by central server)
+    let hostname = domain;
 
     // Build the route configuration
     let route = CaddyRoute {
         id: site_id.to_string(),
         match_rules: vec![CaddyMatch {
-            host: vec![hostname.clone()],
+            host: vec![hostname.to_string()],
         }],
         handle: vec![CaddyHandler::FileServer {
             root: site_dir.to_string_lossy().to_string(),

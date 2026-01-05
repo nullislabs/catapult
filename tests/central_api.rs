@@ -156,7 +156,13 @@ async fn test_status_update_valid_signature() {
     // Create a job context
     let job_id = Uuid::new_v4();
     db::store_job_context(
-        &db.pool, job_id, 12345, "testorg", "testrepo", 111, "abc123",
+        &db.pool,
+        job_id,
+        12345,
+        "testorg",
+        "testrepo",
+        Some(111),
+        "abc123",
     )
     .await
     .expect("Failed to store job context");
@@ -231,7 +237,13 @@ async fn test_status_update_failure() {
     // Create a job context
     let job_id = Uuid::new_v4();
     db::store_job_context(
-        &db.pool, job_id, 12345, "testorg", "testrepo", 222, "def456",
+        &db.pool,
+        job_id,
+        12345,
+        "testorg",
+        "testrepo",
+        Some(222),
+        "def456",
     )
     .await
     .expect("Failed to store job context");

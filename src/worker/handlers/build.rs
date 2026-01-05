@@ -167,8 +167,8 @@ async fn run_build_pipeline(state: &AppState, job: &BuildJob) -> anyhow::Result<
     copy_dir_recursive(&output_dir, &site_dir).await?;
 
     // Configure Caddy route
-    let deployed_url =
-        crate::shared::generate_preview_url(&job.domain, &job.repo_name, job.pr_number);
+    // Domain is already fully resolved by central server (includes PR subdomain if applicable)
+    let deployed_url = crate::shared::generate_preview_url(&job.domain);
 
     configure_caddy_route(
         &state.http_client,
@@ -176,8 +176,6 @@ async fn run_build_pipeline(state: &AppState, job: &BuildJob) -> anyhow::Result<
         &site_id,
         &site_dir,
         &job.domain,
-        &job.repo_name,
-        job.pr_number,
     )
     .await?;
 

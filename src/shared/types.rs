@@ -330,11 +330,11 @@ pub fn generate_site_id(org: &str, repo: &str, pr_number: Option<u32>) -> String
 }
 
 /// Generate the preview URL for a deployment
-pub fn generate_preview_url(domain: &str, repo: &str, pr_number: Option<u32>) -> String {
-    match pr_number {
-        Some(pr) => format!("https://pr-{}-{}.{}", pr, repo.to_lowercase(), domain),
-        None => format!("https://{}", domain),
-    }
+///
+/// The domain is already fully resolved by central server (includes PR subdomain if applicable),
+/// so we just add the https:// prefix.
+pub fn generate_preview_url(domain: &str) -> String {
+    format!("https://{}", domain)
 }
 
 #[cfg(test)]
@@ -355,14 +355,12 @@ mod tests {
 
     #[test]
     fn test_generate_preview_url() {
+        // Domain is already fully resolved by central server
         assert_eq!(
-            generate_preview_url("example.com", "Website", Some(42)),
+            generate_preview_url("pr-42-website.example.com"),
             "https://pr-42-website.example.com"
         );
-        assert_eq!(
-            generate_preview_url("example.com", "Website", None),
-            "https://example.com"
-        );
+        assert_eq!(generate_preview_url("example.com"), "https://example.com");
     }
 
     #[test]

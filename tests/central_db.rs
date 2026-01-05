@@ -90,7 +90,7 @@ async fn test_job_context_crud() {
         installation_id,
         org,
         repo,
-        comment_id,
+        Some(comment_id),
         commit_sha,
     )
     .await
@@ -138,7 +138,7 @@ async fn test_job_context_upsert() {
         installation_id,
         org,
         repo,
-        111,
+        Some(111),
         commit_sha,
     )
     .await
@@ -151,7 +151,7 @@ async fn test_job_context_upsert() {
         installation_id,
         org,
         repo,
-        222,
+        Some(222),
         commit_sha,
     )
     .await
