@@ -61,15 +61,16 @@ pub async fn configure_caddy_route(
 }
 
 /// Remove a Caddy route by ID
+///
+/// Uses Caddy's /id/ endpoint which allows direct access to objects by their @id field.
+/// This is cleaner than traversing the config path since routes are stored in an array.
 pub async fn remove_caddy_route(
     http_client: &reqwest::Client,
     caddy_admin_api: &str,
     site_id: &str,
 ) -> Result<()> {
-    let url = format!(
-        "{}/config/apps/http/servers/main/routes/{}",
-        caddy_admin_api, site_id
-    );
+    // Use /id/{id} endpoint to delete by @id field directly
+    let url = format!("{}/id/{}", caddy_admin_api, site_id);
 
     let response = http_client
         .delete(&url)
