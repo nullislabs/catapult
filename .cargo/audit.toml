@@ -1,0 +1,24 @@
+# Security audit configuration
+# See https://rustsec.org for advisory details
+
+[advisories]
+# Advisories to ignore - all are transitive dependencies with no available fix
+ignore = [
+    # rsa timing attack - transitive via sqlx-mysql (compile-time query checking)
+    # We use PostgreSQL, not MySQL, so this doesn't affect runtime security
+    # https://rustsec.org/advisories/RUSTSEC-2023-0071
+    "RUSTSEC-2023-0071",
+
+    # tokio-tar PAX header parsing - only used by testcontainers (dev dependency)
+    # Not present in production builds
+    # https://rustsec.org/advisories/RUSTSEC-2025-0111
+    "RUSTSEC-2025-0111",
+
+    # rustls-pemfile unmaintained - transitive via bollard
+    # No alternative available yet, watching for updates
+    # https://rustsec.org/advisories/RUSTSEC-2025-0134
+    "RUSTSEC-2025-0134",
+]
+
+# Don't fail on informational advisories (unmaintained, unsound, etc.)
+informational_warnings = []

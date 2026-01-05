@@ -23,6 +23,7 @@ struct JwtClaims {
 #[derive(Debug, Deserialize)]
 pub struct InstallationToken {
     pub token: String,
+    #[allow(dead_code)]
     pub expires_at: String,
 }
 

@@ -137,7 +137,7 @@ async fn execute_build(state: AppState, job: BuildJob) {
 async fn run_build_pipeline(state: &AppState, job: &BuildJob) -> anyhow::Result<String> {
     use crate::shared::generate_site_id;
     use crate::worker::builder::{clone_repository, run_build};
-    use crate::worker::deploy::{configure_caddy_route, write_site_metadata, SiteMetadata};
+    use crate::worker::deploy::{SiteMetadata, configure_caddy_route, write_site_metadata};
 
     let site_id = generate_site_id(&job.org_name, &job.repo_name, job.pr_number);
 

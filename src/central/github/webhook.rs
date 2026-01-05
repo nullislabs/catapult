@@ -41,6 +41,7 @@ pub enum PullRequestAction {
 #[derive(Debug, Clone, Deserialize)]
 pub struct PullRequest {
     pub head: PullRequestHead,
+    #[allow(dead_code)]
     pub merged: Option<bool>,
 }
 
@@ -78,6 +79,7 @@ impl PushEvent {
 #[derive(Debug, Clone, Deserialize)]
 pub struct Repository {
     pub name: String,
+    #[allow(dead_code)]
     pub full_name: String,
     pub clone_url: String,
     pub owner: RepositoryOwner,

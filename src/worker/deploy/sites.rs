@@ -22,8 +22,8 @@ const METADATA_FILE: &str = ".catapult.json";
 /// Write site metadata to the site directory
 pub async fn write_site_metadata(site_dir: &Path, metadata: &SiteMetadata) -> Result<()> {
     let metadata_path = site_dir.join(METADATA_FILE);
-    let content = serde_json::to_string_pretty(metadata)
-        .context("Failed to serialize site metadata")?;
+    let content =
+        serde_json::to_string_pretty(metadata).context("Failed to serialize site metadata")?;
 
     tokio::fs::write(&metadata_path, content)
         .await
@@ -50,8 +50,8 @@ pub async fn read_site_metadata(site_dir: &Path) -> Result<Option<SiteMetadata>>
         .await
         .context("Failed to read site metadata")?;
 
-    let metadata: SiteMetadata = serde_json::from_str(&content)
-        .context("Failed to parse site metadata")?;
+    let metadata: SiteMetadata =
+        serde_json::from_str(&content).context("Failed to parse site metadata")?;
 
     Ok(Some(metadata))
 }

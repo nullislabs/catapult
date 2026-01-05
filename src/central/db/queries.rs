@@ -278,7 +278,12 @@ pub async fn upsert_pr_comment(
 }
 
 /// Delete PR comment tracking when PR is closed
-pub async fn delete_pr_comment(pool: &PgPool, org: &str, repo: &str, pr_number: u32) -> Result<bool> {
+pub async fn delete_pr_comment(
+    pool: &PgPool,
+    org: &str,
+    repo: &str,
+    pr_number: u32,
+) -> Result<bool> {
     let result = sqlx::query(
         r#"
         DELETE FROM pr_comments

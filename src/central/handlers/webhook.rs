@@ -157,43 +157,52 @@ async fn process_webhook_event(state: &AppState, event: WebhookEvent) -> anyhow:
 
                     // Create or update the PR comment
                     let github_client = GitHubClient::new(token.token.clone());
-                    let comment_id = match db::get_pr_comment(&state.db, org, repo, pr_event.number)
-                        .await?
-                    {
-                        Some(existing_comment_id) => {
-                            // Update existing comment
-                            tracing::debug!(
-                                pr = pr_event.number,
-                                comment_id = existing_comment_id,
-                                "Updating existing PR comment"
-                            );
-                            github_client
-                                .update_comment(
-                                    org,
-                                    repo,
-                                    existing_comment_id,
-                                    &GitHubClient::building_comment(&pr_event.pull_request.head.sha),
-                                )
-                                .await?;
-                            existing_comment_id
-                        }
-                        None => {
-                            // Create new comment
-                            tracing::debug!(pr = pr_event.number, "Creating new PR comment");
-                            let comment = github_client
-                                .create_pr_comment(
+                    let comment_id =
+                        match db::get_pr_comment(&state.db, org, repo, pr_event.number).await? {
+                            Some(existing_comment_id) => {
+                                // Update existing comment
+                                tracing::debug!(
+                                    pr = pr_event.number,
+                                    comment_id = existing_comment_id,
+                                    "Updating existing PR comment"
+                                );
+                                github_client
+                                    .update_comment(
+                                        org,
+                                        repo,
+                                        existing_comment_id,
+                                        &GitHubClient::building_comment(
+                                            &pr_event.pull_request.head.sha,
+                                        ),
+                                    )
+                                    .await?;
+                                existing_comment_id
+                            }
+                            None => {
+                                // Create new comment
+                                tracing::debug!(pr = pr_event.number, "Creating new PR comment");
+                                let comment = github_client
+                                    .create_pr_comment(
+                                        org,
+                                        repo,
+                                        pr_event.number,
+                                        &GitHubClient::building_comment(
+                                            &pr_event.pull_request.head.sha,
+                                        ),
+                                    )
+                                    .await?;
+                                // Store the comment ID for future updates
+                                db::upsert_pr_comment(
+                                    &state.db,
                                     org,
                                     repo,
                                     pr_event.number,
-                                    &GitHubClient::building_comment(&pr_event.pull_request.head.sha),
+                                    comment.id,
                                 )
                                 .await?;
-                            // Store the comment ID for future updates
-                            db::upsert_pr_comment(&state.db, org, repo, pr_event.number, comment.id)
-                                .await?;
-                            comment.id
-                        }
-                    };
+                                comment.id
+                            }
+                        };
 
                     // Dispatch build job
                     let job = BuildJob {
@@ -261,7 +270,8 @@ async fn process_webhook_event(state: &AppState, event: WebhookEvent) -> anyhow:
                     .await?;
 
                     // Clean up the PR comment tracking
-                    if let Err(e) = db::delete_pr_comment(&state.db, org, repo, pr_event.number).await
+                    if let Err(e) =
+                        db::delete_pr_comment(&state.db, org, repo, pr_event.number).await
                     {
                         tracing::warn!(
                             error = %e,

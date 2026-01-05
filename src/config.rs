@@ -130,7 +130,8 @@ impl CentralConfig {
 /// Configuration for Worker mode
 #[derive(Debug, Clone)]
 pub struct WorkerConfig {
-    /// URL of the Central server
+    /// URL of the Central server (reserved for future use)
+    #[allow(dead_code)]
     pub central_url: String,
 
     /// Shared secret for authentication with Central
