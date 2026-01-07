@@ -8,7 +8,7 @@ use axum::{
 use tower_http::trace::TraceLayer;
 
 use crate::config::WorkerConfig;
-use crate::worker::deploy::{CloudflareClient, CloudflareConfig, restore_all_routes};
+use crate::worker::deploy::{CloudflareClient, CloudflareConfig, restore_all_routes, wait_for_caddy_ready};
 use crate::worker::handlers::{handle_build, handle_cleanup};
 
 /// Shared application state
@@ -45,15 +45,20 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
         cloudflare,
     };
 
-    // Restore Caddy routes for existing site deployments
-    match restore_all_routes(&http_client, &config.caddy_admin_api, &config.sites_dir).await {
-        Ok(count) => {
-            if count > 0 {
-                tracing::info!(count, "Restored Caddy routes for existing sites");
+    // Wait for Caddy admin API to be ready before restoring routes
+    if let Err(e) = wait_for_caddy_ready(&http_client, &config.caddy_admin_api).await {
+        tracing::error!(error = %e, "Caddy admin API not available, skipping route restoration");
+    } else {
+        // Restore Caddy routes for existing site deployments
+        match restore_all_routes(&http_client, &config.caddy_admin_api, &config.sites_dir).await {
+            Ok(count) => {
+                if count > 0 {
+                    tracing::info!(count, "Restored Caddy routes for existing sites");
+                }
             }
-        }
-        Err(e) => {
-            tracing::error!(error = %e, "Failed to restore Caddy routes");
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to restore Caddy routes");
+            }
         }
     }
 

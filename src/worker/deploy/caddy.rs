@@ -1,6 +1,58 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::time::Duration;
+
+const CADDY_READY_TIMEOUT: Duration = Duration::from_secs(60);
+const CADDY_READY_INTERVAL: Duration = Duration::from_millis(500);
+
+/// Wait for Caddy admin API to be ready
+///
+/// Polls the Caddy admin API until it responds or timeout is reached.
+/// This should be called before attempting to restore routes on startup.
+pub async fn wait_for_caddy_ready(
+    http_client: &reqwest::Client,
+    caddy_admin_api: &str,
+) -> Result<()> {
+    let start = std::time::Instant::now();
+    let url = format!("{}/config/", caddy_admin_api);
+
+    tracing::info!(
+        caddy_admin_api = caddy_admin_api,
+        timeout_secs = CADDY_READY_TIMEOUT.as_secs(),
+        "Waiting for Caddy to be ready"
+    );
+
+    loop {
+        match http_client.get(&url).send().await {
+            Ok(response) if response.status().is_success() => {
+                tracing::info!(
+                    elapsed_ms = start.elapsed().as_millis() as u64,
+                    "Caddy admin API is ready"
+                );
+                return Ok(());
+            }
+            Ok(response) => {
+                tracing::debug!(
+                    status = %response.status(),
+                    "Caddy not ready yet (unexpected status)"
+                );
+            }
+            Err(e) => {
+                tracing::debug!(error = %e, "Caddy not ready yet");
+            }
+        }
+
+        if start.elapsed() >= CADDY_READY_TIMEOUT {
+            anyhow::bail!(
+                "Caddy admin API not ready after {:?}",
+                CADDY_READY_TIMEOUT
+            );
+        }
+
+        tokio::time::sleep(CADDY_READY_INTERVAL).await;
+    }
+}
 
 /// Configure a Caddy route for a deployment via the admin API
 ///
