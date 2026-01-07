@@ -44,10 +44,7 @@ pub async fn wait_for_caddy_ready(
         }
 
         if start.elapsed() >= CADDY_READY_TIMEOUT {
-            anyhow::bail!(
-                "Caddy admin API not ready after {:?}",
-                CADDY_READY_TIMEOUT
-            );
+            anyhow::bail!("Caddy admin API not ready after {:?}", CADDY_READY_TIMEOUT);
         }
 
         tokio::time::sleep(CADDY_READY_INTERVAL).await;

@@ -8,7 +8,9 @@ use axum::{
 use tower_http::trace::TraceLayer;
 
 use crate::config::WorkerConfig;
-use crate::worker::deploy::{CloudflareClient, CloudflareConfig, restore_all_routes, wait_for_caddy_ready};
+use crate::worker::deploy::{
+    CloudflareClient, CloudflareConfig, restore_all_routes, wait_for_caddy_ready,
+};
 use crate::worker::handlers::{handle_build, handle_cleanup};
 
 /// Shared application state
