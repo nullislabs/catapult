@@ -318,6 +318,7 @@
             buildInputs = with pkgs; [
               nodejs_22
               nodePackages.npm
+              pnpm
               git
               cacert
             ];
@@ -333,6 +334,7 @@
             buildInputs = with pkgs; [
               nodejs_22
               nodePackages.npm
+              pnpm
               git
               cacert
             ];
